@@ -126,7 +126,6 @@ import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
 import { EDITOR_CONTENT_MAX_WIDTH, EDITOR_CONTENT_MAX_WIDTH_COLLAPSED } from "@/lib/workspace-ui";
 import {
   countMemoCharacters,
-  deriveMemoTitleDuringInitialEdit,
   docToMarkdown,
   MEMO_CONTENT_STYLE,
   markdownToDoc,
@@ -954,9 +953,6 @@ const RichEditorPane = ({
   }, [desktopReadingProtection]);
 
   const memoRef = useRef<MemoDetail | null>(memo);
-  const titleRef = useRef(title);
-  const titleDerivationEligibleRef = useRef(false);
-  const titleWasAutoDerivedRef = useRef(false);
   const editSessionRef = useRef<MemoEditSession | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const editorCanvasInteractionVersionRef = useRef(0);
@@ -1001,25 +997,6 @@ const RichEditorPane = ({
       "external-link": "",
     },
   });
-  titleRef.current = title;
-
-  const maybeDeriveMemoTitle = useCallback((contentJson: TiptapDoc, finalize = false) => {
-    if (
-      !titleDerivationEligibleRef.current ||
-      (titleRef.current.trim() && !titleWasAutoDerivedRef.current)
-    ) return titleRef.current;
-    const derivedTitle = deriveMemoTitleDuringInitialEdit(
-      titleRef.current,
-      contentJson,
-      titleWasAutoDerivedRef.current,
-    );
-    if (!derivedTitle) return titleRef.current;
-    titleWasAutoDerivedRef.current = true;
-    titleRef.current = derivedTitle;
-    setTitle(derivedTitle);
-    if (finalize) titleDerivationEligibleRef.current = false;
-    return derivedTitle;
-  }, []);
   slashCommandLabelsRef.current = {
     menu: t("slashMenu.menu"),
     empty: t("slashMenu.empty"),
@@ -2201,12 +2178,7 @@ const RichEditorPane = ({
       return;
     }
 
-    const refreshToolbar = () => {
-      setEditorStateVersion((version) => version + 1);
-      if (titleWasAutoDerivedRef.current && !editor.isActive("heading", { level: 1 })) {
-        titleDerivationEligibleRef.current = false;
-      }
-    };
+    const refreshToolbar = () => setEditorStateVersion((version) => version + 1);
     editor.on("selectionUpdate", refreshToolbar);
     editor.on("transaction", refreshToolbar);
 
@@ -2554,9 +2526,6 @@ const RichEditorPane = ({
       setHydratedEditorMemoId(null);
       editingMemoIdRef.current = null;
       setHasUnsavedChanges(false);
-      titleDerivationEligibleRef.current = false;
-      titleWasAutoDerivedRef.current = false;
-      titleRef.current = "";
       setTitle("");
       setTagsText("");
       setMobilePlainText("");
@@ -2723,9 +2692,6 @@ const RichEditorPane = ({
         setSaveConflictInfo(null);
       }
       setTitle(nextTitle);
-      titleRef.current = nextTitle;
-      titleDerivationEligibleRef.current = !nextTitle.trim();
-      titleWasAutoDerivedRef.current = false;
       setTagsText(nextTagsText);
       setMobilePlainText(nextMarkdown);
       setMarkdownSource(nextMarkdown);
@@ -2813,12 +2779,7 @@ const RichEditorPane = ({
       if (hydratingRef.current || memoRef.current?.isDeleted) {
         return;
       }
-      const contentJson = editor.getJSON() as TiptapDoc;
-      const nextTitle = maybeDeriveMemoTitle(
-        contentJson,
-        titleWasAutoDerivedRef.current && !editor.isActive("heading", { level: 1 }),
-      );
-      persistCurrentDraft(nextTitle);
+      persistCurrentDraft();
       markDirty();
     };
 
@@ -2826,7 +2787,7 @@ const RichEditorPane = ({
     return () => {
       editor.off("update", persistDraft);
     };
-  }, [editor, markDirty, maybeDeriveMemoTitle, memo, persistCurrentDraft]);
+  }, [editor, markDirty, memo, persistCurrentDraft]);
 
   useEffect(() => {
     const advanceMemoSyncBase = (syncedMemo: MemoDetail | null | undefined) => {
@@ -2940,9 +2901,8 @@ const RichEditorPane = ({
 
   const handleMarkdownSourceChange = useCallback((value: string) => {
     setMarkdownSource(value);
-    maybeDeriveMemoTitle(markdownToDoc(value));
     markDirty();
-  }, [markDirty, maybeDeriveMemoTitle]);
+  }, [markDirty]);
 
   const handleCopyToWeChat = useCallback(async () => {
     if (!isEditorReady(editor)) {
@@ -3699,7 +3659,6 @@ const RichEditorPane = ({
     };
     const handleNativeInput = (event: Event) => {
       mobileImeDebugRecorderRef.current(event.type, event);
-      maybeDeriveMemoTitle(markdownToDoc(getMobilePlainTextElementValue(plainTextElement)));
       markMobilePlainTextDirtyRef.current();
     };
 
@@ -3723,7 +3682,7 @@ const RichEditorPane = ({
       plainTextElement.removeEventListener("compositionend", recordNativeEvent);
       plainTextElement.removeEventListener("input", handleNativeInput);
     };
-  }, [maybeDeriveMemoTitle, useMobilePlainTextEditor]);
+  }, [useMobilePlainTextEditor]);
 
   useEffect(() => () => clearMobileEditorTimers(), [clearMobileEditorTimers]);
 
@@ -4000,7 +3959,6 @@ const RichEditorPane = ({
     const nextValue = `${currentText}${currentText ? "\n" : ""}${nextText}`;
     setMobilePlainText(nextValue);
     setMobilePlainTextElementValue(mobileTextAreaRef.current, nextValue);
-    maybeDeriveMemoTitle(markdownToDoc(nextValue));
     markMobilePlainTextDirty();
     recordMobileImeDebugEvent(eventName);
     window.requestAnimationFrame(() => focusMobileInputTarget());
@@ -4608,9 +4566,6 @@ const RichEditorPane = ({
             value={title}
             readOnly={effectiveReadOnly}
             onChange={(event) => {
-              titleDerivationEligibleRef.current = false;
-              titleWasAutoDerivedRef.current = false;
-              titleRef.current = event.target.value;
               setTitle(event.target.value);
               persistCurrentDraft(event.target.value, tagsText, getMobilePlainTextValue());
               markDirty();

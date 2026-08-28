@@ -25,7 +25,6 @@ final class MemoEditViewModel {
     var suppressPersistence = false
     var contentHydrated = false
     var baselineMarkdown = ""
-    private(set) var titleDerivationEligible = false
     @ObservationIgnored private var saveTask: Task<Void, Never>?
 
     var tags: [String] {
@@ -42,46 +41,6 @@ final class MemoEditViewModel {
         guard !suppressPersistence else { return }
         editGeneration &+= 1
         isDirty = true
-    }
-
-    func beginTitleDerivationSession() {
-        titleDerivationEligible = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    func userEditedTitle(_ nextTitle: String) {
-        titleDerivationEligible = false
-        title = nextTitle
-    }
-
-    private func deriveTitleIfEligible(from json: String) {
-        guard titleDerivationEligible,
-              let data = json.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let blocks = root["content"] as? [[String: Any]]
-        else { return }
-
-        for block in blocks {
-            let text = Self.nodeText(block)
-                .split(whereSeparator: { $0.isWhitespace })
-                .joined(separator: " ")
-            if text.isEmpty {
-                let type = block["type"] as? String
-                if type == "paragraph" || type == "heading" { continue }
-                return
-            }
-            guard block["type"] as? String == "heading",
-                  let attrs = block["attrs"] as? [String: Any],
-                  (attrs["level"] as? NSNumber)?.intValue == 1
-            else { return }
-            title = String(text.prefix(160))
-            return
-        }
-    }
-
-    private static func nodeText(_ node: [String: Any]) -> String {
-        let own = node["text"] as? String ?? ""
-        let children = (node["content"] as? [[String: Any]] ?? []).map(nodeText).joined()
-        return own + children
     }
 
     func scheduleSave(
@@ -186,7 +145,6 @@ final class MemoEditViewModel {
 
         contentJSON = nextJSON
         contentMarkdown = nextMarkdown
-        deriveTitleIfEligible(from: nextJSON)
     }
 
     func wouldClobberNonEmptyBody(isCreate: Bool) -> Bool {

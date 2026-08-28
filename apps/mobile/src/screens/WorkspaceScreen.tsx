@@ -70,7 +70,7 @@ import { Alert, Pressable, Text, TextInput } from "../components/LocalizedText";
 import Markdown, { type ASTNode, type RenderRules } from "react-native-markdown-display";
 import { SvgXml } from "react-native-svg";
 import { ApiRequestError } from "@edgeever/client";
-import { buildGitHubFeedbackUrl, createExcerpt, DEFAULT_MEMO_TITLE, deriveMemoTitleDuringInitialEdit, docToMarkdown, docToText, getNotebookDescendantIds, markdownToDoc, resolveMemoContentDoc, type AuthUser, type MemoDetail, type MemoRevision, type MemoSummary, type Notebook, type TiptapDoc } from "@edgeever/shared";
+import { buildGitHubFeedbackUrl, createExcerpt, DEFAULT_MEMO_TITLE, docToMarkdown, docToText, getNotebookDescendantIds, markdownToDoc, resolveMemoContentDoc, type AuthUser, type MemoDetail, type MemoRevision, type MemoSummary, type Notebook, type TiptapDoc } from "@edgeever/shared";
 import { MOBILE_UI_METRICS, getMobileCenteredScrollOffset, getMobileNotebookSearchVisibleIds, toggleMobileMemoFilterMode, toggleMobileMemoSelection } from "@edgeever/shared/mobile-ui";
 import { clearMobileMemoDraft, clearMobileNewMemoDraft, readMobileMemoDraft, writeMobileMemoDraft, type MobileMemoDraft } from "../lib/mobile-drafts";
 import {
@@ -2136,7 +2136,6 @@ const CreateMemoModal = ({
   const targetNotebookId = notebookId || fallbackNotebookId;
   const selectedNotebookName = notebooks.find((notebook) => notebook.id === targetNotebookId)?.name ?? "选择笔记本";
   const titleRef = useRef(title);
-  const titleDerivationEligibleRef = useRef(!initialDraft?.title.trim());
   const tagsTextRef = useRef(tagsText);
   const targetNotebookIdRef = useRef(targetNotebookId);
   const userEditedSinceOpenRef = useRef(false);
@@ -2271,8 +2270,6 @@ const CreateMemoModal = ({
     contentMarkdownRef.current = markdown;
     contentJsonRef.current = doc;
     setTitle(seed.title);
-    titleRef.current = seed.title;
-    titleDerivationEligibleRef.current = !seed.title.trim();
     setTagsText(seed.tagsText);
     setContentMarkdown(markdown);
     draftVersionRef.current += 1;
@@ -2567,13 +2564,6 @@ const CreateMemoModal = ({
       }}
       onChange={async (contentJson) => {
         contentJsonRef.current = contentJson;
-        if (titleDerivationEligibleRef.current) {
-          const derivedTitle = deriveMemoTitleDuringInitialEdit(titleRef.current, contentJson, true);
-          if (derivedTitle) {
-            titleRef.current = derivedTitle;
-            setTitle(derivedTitle);
-          }
-        }
         const markdown = docToMarkdown(contentJson);
         contentMarkdownRef.current = markdown;
         setContentMarkdown(markdown);
@@ -2635,7 +2625,6 @@ const CreateMemoModal = ({
           autoCorrect
           accessibilityLabel="笔记标题"
           onChangeText={(value) => {
-            titleDerivationEligibleRef.current = false;
             setTitle(value);
             markDirty();
           }}
@@ -2936,7 +2925,6 @@ const RichEditorModal = ({
   const notebookLabel = notebooks.find((notebook) => notebook.id === notebookId)?.name ?? "未分类";
   const saveLabel = error ? "保存失败" : saving ? "保存中" : uploading ? "上传中" : dirty ? (draftRestored ? "本地草稿" : "未保存") : ready ? "已保存" : "加载中";
   const titleRef = useRef(title);
-  const titleDerivationEligibleRef = useRef(!title.trim());
   const tagsTextRef = useRef(tagsText);
   const notebookIdRef = useRef(notebookId);
   titleRef.current = title;
@@ -2974,13 +2962,6 @@ const RichEditorModal = ({
     }
     contentSnapshotRef.current = contentSnapshot;
     contentJsonRef.current = contentJson;
-    if (titleDerivationEligibleRef.current) {
-      const derivedTitle = deriveMemoTitleDuringInitialEdit(titleRef.current, contentJson, true);
-      if (derivedTitle) {
-        titleRef.current = derivedTitle;
-        setTitle(derivedTitle);
-      }
-    }
     contentMarkdownRef.current = docToMarkdown(contentJson);
     dirtyRef.current = true;
     setDirty(true);
@@ -3238,7 +3219,6 @@ const RichEditorModal = ({
           <View style={styles.richEditorContainer}>
             <TextInput
               onChangeText={(value) => {
-                titleDerivationEligibleRef.current = false;
                 setTitle(value);
                 dirtyRef.current = true;
                 setDirty(true);

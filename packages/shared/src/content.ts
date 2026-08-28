@@ -66,51 +66,6 @@ export type TiptapDoc = {
 };
 
 export const DEFAULT_MEMO_TITLE = "无标题笔记";
-export const MEMO_TITLE_MAX_LENGTH = 160;
-
-const nodeText = (node: unknown): string => {
-  if (!node || typeof node !== "object") return "";
-  const current = node as { text?: unknown; content?: unknown };
-  const ownText = typeof current.text === "string" ? current.text : "";
-  const childText = Array.isArray(current.content) ? current.content.map(nodeText).join("") : "";
-  return `${ownText}${childText}`;
-};
-
-/**
- * Derives a note title only when the first non-empty top-level content block is
- * an H1. Callers own the one-shot edit-session policy; this helper only
- * determines whether the current document is eligible.
- */
-export const deriveMemoTitleFromContent = (doc: unknown): string | null => {
-  if (!doc || typeof doc !== "object") return null;
-  const content = (doc as { content?: unknown }).content;
-  if (!Array.isArray(content)) return null;
-
-  for (const value of content) {
-    if (!value || typeof value !== "object") continue;
-    const node = value as { type?: unknown; attrs?: Record<string, unknown> };
-    const text = nodeText(node).replace(/\s+/g, " ").trim();
-    if (!text) {
-      if (node.type === "paragraph" || node.type === "heading") continue;
-      return null;
-    }
-    if (node.type !== "heading" || node.attrs?.level !== 1) return null;
-    return text.slice(0, MEMO_TITLE_MAX_LENGTH);
-  }
-
-  return null;
-};
-
-/** Keeps an automatically generated title complete while the user is still
- * typing the initial H1, without overriding a title they entered themselves. */
-export const deriveMemoTitleDuringInitialEdit = (
-  currentTitle: string,
-  doc: unknown,
-  wasAutoDerived: boolean,
-): string | null => {
-  if (currentTitle.trim() && !wasAutoDerived) return null;
-  return deriveMemoTitleFromContent(doc);
-};
 
 export const resolveMergedMemoTitle = (
   inputTitle: string | null | undefined,

@@ -11,8 +11,6 @@ import { PUBLIC_DEMO_INSTANCE_URL } from "@edgeever/shared";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ActivityIndicator, GitHub, LockKeyhole } from "../components/icons";
 import { Pressable, Text, TextInput } from "../components/LocalizedText";
-import { formatMobileLoginError } from "../lib/login-error";
-import { useMobileLocale } from "../lib/mobile-locale";
 import { resolveMobileThemeStyles, useMobileTheme, type MobileResolvedTheme } from "../lib/mobile-theme";
 import { useSession } from "../lib/session";
 
@@ -20,7 +18,6 @@ const GITHUB_REPOSITORY_URL = "https://github.com/tianma-if/edgeever";
 
 export const LoginScreen = () => {
   const { resolvedTheme } = useMobileTheme();
-  const { resolvedLocale } = useMobileLocale();
   refreshLoginThemeStyles(resolvedTheme);
   const { signIn } = useSession();
   const [baseUrl, setBaseUrl] = useState("");
@@ -42,7 +39,7 @@ export const LoginScreen = () => {
     try {
       await signIn({ baseUrl, username, password });
     } catch (signInError) {
-      setError(formatMobileLoginError(signInError, resolvedLocale));
+      setError(signInError instanceof Error ? signInError.message : "登录失败");
     } finally {
       setSubmitting(false);
     }
