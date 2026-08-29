@@ -57,6 +57,7 @@ const createEnvironment = () => ({
 
 const createApp = (auth = agentAuth, getResourceRow = async () => null) => {
   const app = new Hono();
+  app.onError((error, context) => context.json({ error: { message: error.message } }, 500));
   app.use("/api/v1/*", async (context, next) => {
     context.set("auth", auth);
     await next();
@@ -174,5 +175,73 @@ describe("resource route contracts", () => {
     expect(response.status).toBe(416);
     expect(response.headers.get("Content-Range")).toBe("bytes */256");
     expect(reads).toBe(0);
+  });
+
+  test("deletes object bytes before marking the resource deleted", async () => {
+    const events = [];
+    const environment = createEnvironment();
+    environment.storage.resources = {
+      delete: async (key) => { events.push(`object:${key}`); },
+    };
+    environment.storage.db.batch = async () => { events.push("database"); return []; };
+    let includeDeleted = false;
+    const response = await createApp(
+      { ...agentAuth, scopes: ["write:resources"] },
+      async (_database, _workspaceId, _resourceId, requestedIncludeDeleted) => {
+        includeDeleted = requestedIncludeDeleted;
+        return { ...resourceRow, storage_config_id: null, is_deleted: 0 };
+      },
+    ).request(
+      "/api/v1/resources/res_1",
+      { method: "DELETE" },
+      environment,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(includeDeleted).toBe(true);
+    expect(events).toEqual(["object:resource-key", "database"]);
+  });
+
+  test("leaves the database active when object deletion fails so the request can be retried", async () => {
+    const environment = createEnvironment();
+    let batches = 0;
+    environment.storage.resources = {
+      delete: async () => { throw new Error("storage unavailable"); },
+    };
+    environment.storage.db.batch = async () => { batches += 1; return []; };
+    const response = await createApp(
+      { ...agentAuth, scopes: ["write:resources"] },
+      async () => ({ ...resourceRow, storage_config_id: null, is_deleted: 0 }),
+    ).request(
+      "/api/v1/resources/res_1",
+      { method: "DELETE" },
+      environment,
+    );
+
+    expect(response.status).toBe(500);
+    expect(batches).toBe(0);
+  });
+
+  test("retries object cleanup for an already deleted resource without duplicating its audit event", async () => {
+    const environment = createEnvironment();
+    let deletes = 0;
+    let batches = 0;
+    environment.storage.resources = {
+      delete: async () => { deletes += 1; },
+    };
+    environment.storage.db.batch = async () => { batches += 1; return []; };
+    const response = await createApp(
+      { ...agentAuth, scopes: ["write:resources"] },
+      async () => ({ ...resourceRow, storage_config_id: null, is_deleted: 1 }),
+    ).request(
+      "/api/v1/resources/res_1",
+      { method: "DELETE" },
+      environment,
+    );
+
+    expect(response.status).toBe(200);
+    expect(deletes).toBe(1);
+    expect(batches).toBe(0);
   });
 });

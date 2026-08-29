@@ -32,6 +32,7 @@ export type ResourceRow = {
   height: number | null;
   created_at: string;
   updated_at: string;
+  is_deleted?: number;
 };
 
 export type ResourceListRow = ResourceRow & {
