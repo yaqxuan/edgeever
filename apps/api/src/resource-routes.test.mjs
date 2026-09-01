@@ -72,6 +72,7 @@ const createApp = (auth = agentAuth, getResourceRow = async () => null, override
     uploadResourcePart: async () => { throw new Error("Unexpected multipart part"); },
     completeResourceUpload: async () => { throw new Error("Unexpected multipart completion"); },
     abortResourceUpload: async () => { throw new Error("Unexpected multipart abort"); },
+    replaceResourceContent: async () => { throw new Error("Unexpected resource replacement"); },
     ...overrides,
   });
   return app;
@@ -111,6 +112,39 @@ describe("resource route contracts", () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: { code: "forbidden" } });
+  });
+
+  test("replaces resource content with an explicit optimistic-concurrency baseline", async () => {
+    let replacement;
+    const form = new FormData();
+    form.append("file", new File(["scene"], "drawing.excalidraw", { type: "application/vnd.excalidraw+json" }));
+    form.append("expectedContentHash", "checksum");
+    form.append("mimeType", "application/vnd.excalidraw+json");
+    form.append("filename", "drawing.excalidraw");
+    const response = await createApp(
+      { ...agentAuth, scopes: ["write:resources"] },
+      async () => resourceRow,
+      {
+        replaceResourceContent: async (_context, input) => {
+          replacement = input;
+          return { ...resourceRow, sha256: "next-checksum", byte_size: 5 };
+        },
+      },
+    ).request(
+      "/api/v1/resources/res_1/blob",
+      { method: "PUT", body: form },
+      createEnvironment(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(replacement).toMatchObject({
+      resourceId: "res_1",
+      expectedContentHash: "checksum",
+      filename: "drawing.excalidraw",
+      mimeType: "application/vnd.excalidraw+json",
+    });
+    expect(new TextDecoder().decode(replacement.bytes)).toBe("scene");
+    expect(await response.json()).toMatchObject({ resource: { id: "res_1", sha256: "next-checksum" } });
   });
 
   test("initializes a bounded multipart upload after memo authorization", async () => {

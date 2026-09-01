@@ -66,6 +66,14 @@ type ResourceRouteDependencies = {
     actor: AuditActor,
   ) => Promise<Resource>;
   abortResourceUpload: (context: AppContext, uploadId: string) => Promise<void>;
+  replaceResourceContent: (context: AppContext, input: {
+    resourceId: string;
+    expectedContentHash: string;
+    filename: string;
+    mimeType: string;
+    bytes: Uint8Array;
+    actor: AuditActor;
+  }) => Promise<Resource>;
 };
 
 const MAX_LEGACY_RESOURCE_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -312,6 +320,47 @@ export const registerResourceRoutes = (
     );
     headers.set("X-Content-Type-Options", "nosniff");
     return new Response(object.body, { headers, status: byteRange.kind === "range" ? 206 : 200 });
+  });
+
+  app.put("/api/v1/resources/:id/blob", async (context) => {
+    const denied = requireScopes(context, "write:resources");
+    if (denied) return denied;
+
+    const declaredRequestBytes = Number(context.req.header("Content-Length"));
+    if (
+      Number.isFinite(declaredRequestBytes)
+      && declaredRequestBytes > MAX_LEGACY_RESOURCE_UPLOAD_BYTES + 1024 * 1024
+    ) {
+      return apiError(context, "upload_too_large", "Resource replacements must be at most 100 MiB.", 413);
+    }
+
+    const form = await context.req.raw.formData();
+    const file = form.get("file");
+    const expectedContentHash = form.get("expectedContentHash");
+    const declaredMimeType = form.get("mimeType");
+    const declaredFilename = form.get("filename");
+    if (!(file instanceof File) || typeof expectedContentHash !== "string" || !expectedContentHash.trim()) {
+      return badRequest(context, "file and expectedContentHash are required.");
+    }
+    if (file.size > MAX_LEGACY_RESOURCE_UPLOAD_BYTES) {
+      return apiError(context, "upload_too_large", "Resource replacements must be at most 100 MiB.", 413);
+    }
+
+    try {
+      const resource = await dependencies.replaceResourceContent(context, {
+        resourceId: context.req.param("id"),
+        expectedContentHash,
+        filename: typeof declaredFilename === "string" && declaredFilename.trim() ? declaredFilename : file.name,
+        mimeType: typeof declaredMimeType === "string" && declaredMimeType.trim()
+          ? declaredMimeType
+          : file.type || "application/octet-stream",
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        actor: getAuditActor(context),
+      });
+      return context.json({ resource });
+    } catch (error) {
+      return appErrorResponse(context, error);
+    }
   });
 
   app.patch(

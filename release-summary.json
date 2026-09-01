@@ -1,11 +1,17 @@
 {
-  "version": "1.51.1",
+  "version": "1.52.0",
   "changes": {
     "en-US": [
-      "Restore the macOS, Windows, Android, and iOS icons in the desktop download menu."
+      "Plugins can now expose resource panels and embedded content through expanded, reusable host APIs.",
+      "The AI assistant can be moved around the workspace and now preserves input, refinement context, and on-screen visibility more reliably.",
+      "Desktop editing avoids redundant editor state hydration for a steadier writing experience.",
+      "Custom editor themes can now be imported and exported, while low-contrast choices show warnings without blocking intentional saves."
     ],
     "zh-CN": [
-      "修复桌面端下载菜单中 macOS、Windows、Android 和 iOS 图标无法显示的问题。"
+      "插件现在可通过扩展后的通用宿主 API 提供资源面板与嵌入内容。",
+      "AI 助手现在可在工作区中拖动，并能更可靠地保留输入与优化上下文、保持完整可见。",
+      "桌面端编辑避免重复恢复编辑器状态，带来更稳定的写作体验。",
+      "自定义编辑器主题现在支持导入和导出；低对比度配色会给出提醒，但不再阻止用户有意保存。"
     ]
   }
 }
