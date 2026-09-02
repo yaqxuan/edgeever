@@ -1,0 +1,167 @@
+.ProseMirror .edgeever-portable-abbr {
+  border-bottom: 1px dotted currentColor;
+  color: #047857;
+  cursor: help;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.ProseMirror .edgeever-portable-abbr:focus-visible,
+.ProseMirror .edgeever-portable-sup:focus-visible {
+  border-radius: 0.2rem;
+  outline: 2px solid #16a06e;
+  outline-offset: 2px;
+}
+
+.ProseMirror .edgeever-portable-sup,
+.ProseMirror .edgeever-portable-sub {
+  color: #047857;
+  font-size: 0.72em;
+  line-height: 0;
+}
+
+.ProseMirror .edgeever-portable-sup {
+  cursor: pointer;
+}
+
+.ProseMirror .edgeever-portable-mark {
+  border-radius: 0.18rem;
+  background: #fef08a;
+  color: inherit;
+  padding: 0 0.12em;
+}
+
+.ProseMirror .edgeever-portable-kbd {
+  border: 1px solid #cbd5e1;
+  border-bottom-width: 2px;
+  border-radius: 0.3rem;
+  background: #f8fafc;
+  color: #334155;
+  font: 600 0.78em/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  padding: 0.08rem 0.32rem;
+}
+
+.ProseMirror .edgeever-portable-details {
+  position: relative;
+  margin: 0.9rem 0;
+  border: 1px solid #d1fae5;
+  border-radius: 0.65rem;
+  background: rgb(236 253 245 / 55%);
+  padding: 0.72rem 0.9rem 0.72rem 2.4rem;
+}
+
+.ProseMirror .edgeever-portable-details-toggle {
+  position: absolute;
+  top: 0.72rem;
+  left: 0.82rem;
+  display: grid;
+  height: 1.35rem;
+  width: 1.35rem;
+  place-items: center;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: #047857;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.ProseMirror .edgeever-portable-details-toggle:hover,
+.ProseMirror .edgeever-portable-details-toggle:focus-visible {
+  background: #d1fae5;
+  outline: none;
+}
+
+.ProseMirror .edgeever-portable-details-summary {
+  display: block;
+  min-height: 1.35rem;
+  font-weight: 700;
+}
+
+.ProseMirror .edgeever-portable-details-content {
+  margin-top: 0.65rem;
+}
+
+.ProseMirror .edgeever-portable-details-content > :last-child {
+  margin-bottom: 0;
+}
+
+@keyframes edgeever-footnote-jump {
+  0%, 100% { background: transparent; }
+  25%, 70% { background: rgb(167 243 208 / 65%); }
+}
+
+.ProseMirror .edgeever-footnote-jump-target {
+  border-radius: 0.25rem;
+  animation: edgeever-footnote-jump 1.8s ease-out;
+}
+
+.edgeever-portable-tooltip-anchor {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.edgeever-portable-tooltip {
+  z-index: 50;
+  max-width: min(22rem, calc(100vw - 2rem));
+  overflow: hidden;
+  border-radius: 0.4rem;
+  background: #020617;
+  color: #fff;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  text-align: left;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 24%);
+}
+
+.edgeever-portable-tooltip-body > * + * {
+  margin-top: 0.5rem;
+}
+
+.edgeever-portable-tooltip-jump {
+  border: 0;
+  border-radius: 0.3rem;
+  background: #059669;
+  color: #fff;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  font: 600 0.75rem/1.25rem system-ui, sans-serif;
+}
+
+.edgeever-portable-tooltip-jump:hover,
+.edgeever-portable-tooltip-jump:focus-visible {
+  background: #10b981;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+:root.dark .ProseMirror .edgeever-portable-abbr,
+:root.dark .ProseMirror .edgeever-portable-sup,
+:root.dark .ProseMirror .edgeever-portable-sub,
+:root.dark .ProseMirror .edgeever-portable-details-toggle {
+  color: #6ee7b7;
+}
+
+:root.dark .ProseMirror .edgeever-portable-mark {
+  background: #854d0e;
+  color: #fefce8;
+}
+
+:root.dark .ProseMirror .edgeever-portable-kbd {
+  border-color: #475569;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+:root.dark .ProseMirror .edgeever-portable-details {
+  border-color: #065f46;
+  background: rgb(6 78 59 / 28%);
+}
+
+:root.dark .ProseMirror .edgeever-portable-details-toggle:hover,
+:root.dark .ProseMirror .edgeever-portable-details-toggle:focus-visible {
+  background: #064e3b;
+}

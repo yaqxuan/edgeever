@@ -3,6 +3,17 @@ import type { TiptapDoc, TiptapMark, TiptapNode, TiptapTextNode } from "./conten
 import { FILE_ATTACHMENT_NODE_TYPE } from "./file-attachment";
 import { PDF_ATTACHMENT_NODE_TYPE } from "./pdf-attachment";
 import { PLUGIN_EMBED_NODE_TYPE } from "./plugin-embed";
+import {
+  PORTABLE_ABBR_MARK_TYPE,
+  PORTABLE_DETAILS_CONTENT_NODE_TYPE,
+  PORTABLE_DETAILS_NODE_TYPE,
+  PORTABLE_DETAILS_SUMMARY_NODE_TYPE,
+  PORTABLE_KBD_MARK_TYPE,
+  PORTABLE_MARK_MARK_TYPE,
+  PORTABLE_SUB_MARK_TYPE,
+  PORTABLE_SUP_MARK_TYPE,
+  PORTABLE_UNDERLINE_MARK_TYPE,
+} from "./portable-html";
 
 export const UNSUPPORTED_BLOCK_NODE_TYPE = "edgeeverUnsupportedBlock" as const;
 export const UNSUPPORTED_INLINE_NODE_TYPE = "edgeeverUnsupportedInline" as const;
@@ -54,6 +65,19 @@ const MARKDOWN_EDITOR_NODE_TYPES = new Set<string>([
   FILE_ATTACHMENT_NODE_TYPE,
   PDF_ATTACHMENT_NODE_TYPE,
   PLUGIN_EMBED_NODE_TYPE,
+  PORTABLE_DETAILS_NODE_TYPE,
+  PORTABLE_DETAILS_SUMMARY_NODE_TYPE,
+  PORTABLE_DETAILS_CONTENT_NODE_TYPE,
+]);
+
+const MARKDOWN_EDITOR_MARK_TYPES = new Set<string>([
+  ...NATIVE_EDITOR_MARK_TYPES,
+  PORTABLE_ABBR_MARK_TYPE,
+  PORTABLE_SUP_MARK_TYPE,
+  PORTABLE_SUB_MARK_TYPE,
+  PORTABLE_MARK_MARK_TYPE,
+  PORTABLE_UNDERLINE_MARK_TYPE,
+  PORTABLE_KBD_MARK_TYPE,
 ]);
 
 const INLINE_PARENT_TYPES = new Set<string>(["paragraph", "heading"]);
@@ -289,7 +313,7 @@ export const projectNativeUnknownContentForMarkdown = (doc: TiptapDoc): TiptapDo
       const textNode = node;
       return {
         ...textNode,
-        marks: textNode.marks?.filter((mark) => NATIVE_EDITOR_MARK_TYPES.has(mark.type) && mark.type !== UNSUPPORTED_MARK_TYPE),
+        marks: textNode.marks?.filter((mark) => MARKDOWN_EDITOR_MARK_TYPES.has(mark.type) && mark.type !== UNSUPPORTED_MARK_TYPE),
       };
     }
     if (!MARKDOWN_EDITOR_NODE_TYPES.has(node.type) || FALLBACK_NODE_TYPES.has(node.type)) {

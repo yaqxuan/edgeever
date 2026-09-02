@@ -103,6 +103,7 @@ import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
 import { EDITOR_CONTENT_MAX_WIDTH, EDITOR_CONTENT_MAX_WIDTH_COLLAPSED } from "@/lib/workspace-ui";
 import {
   countMemoCharacters,
+  createPortableHtmlExtensions,
   docToMarkdown,
   MEMO_CONTENT_STYLE,
   markdownToDoc,
@@ -150,6 +151,7 @@ import {
 } from "@/lib/app-helpers";
 import { copyEditorToWeChat, copyMarkdownToWeChat } from "@/lib/wechat-copy";
 import { ThemeBlock } from "./ThemeBlock";
+import { PortableHtmlInteractionController } from "./editor/PortableHtmlInteractionController";
 import { SystemInfoDialog } from "./SystemInfoDialog";
 import { useDeployedUpdateNotice } from "@/hooks/useDeployedUpdateNotice";
 import { downloadMarkdownFile } from "@/lib/note-markdown-export";
@@ -1143,6 +1145,7 @@ const RichEditorPane = ({
       PdfAttachment,
       FileAttachment,
       ...createEdgeEverMathematics(),
+      ...createPortableHtmlExtensions(),
       ThemeBlock,
       ResizableImage.configure({
         allowBase64: false,
@@ -4394,6 +4397,7 @@ const RichEditorPane = ({
                   </Button>
                 </BubbleMenu>
                 <EditorContent editor={editor} />
+                <PortableHtmlInteractionController editor={editor} />
               </div>
             )}
           </div>

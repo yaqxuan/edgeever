@@ -1,5 +1,6 @@
 @import "highlight.js/styles/github.css";
 @import "./editor-themes/index.css";
+@import "./portable-html.css";
 
 @tailwind base;
 @tailwind components;

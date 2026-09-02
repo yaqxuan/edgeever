@@ -15,6 +15,7 @@ import { EdgeEverCodeBlock, codeBlockLowlight } from "@/lib/code-block";
 import { withEnvironmentTitlePrefix } from "@/lib/environment-title";
 import {
   parseImageWidth,
+  createPortableHtmlExtensions,
   getImageReferrerPolicy,
   MergeDivider,
   PluginEmbed,
@@ -25,6 +26,7 @@ import {
 import { createEdgeEverMathematics } from "@edgeever/shared/mathematics";
 import { PdfAttachment } from "@/components/editor/PdfAttachment";
 import { FileAttachment } from "@/components/editor/FileAttachment";
+import { PortableHtmlInteractionController } from "@/components/editor/PortableHtmlInteractionController";
 
 const SharedImage = Image.extend({
   addAttributes() {
@@ -96,6 +98,7 @@ const SharedDocument = ({ share, token }: { share: PublicMemoShare; token: strin
       PdfAttachment,
       FileAttachment,
       ...createEdgeEverMathematics(),
+      ...createPortableHtmlExtensions(),
       SharedThemeBlock,
       SharedImage.configure({ allowBase64: false, inline: false }),
       TableKit.configure({ table: { renderWrapper: true } }),
@@ -110,7 +113,12 @@ const SharedDocument = ({ share, token }: { share: PublicMemoShare; token: strin
     },
   }, [content]);
 
-  return <EditorContent editor={editor} />;
+  return (
+    <>
+      <EditorContent editor={editor} />
+      <PortableHtmlInteractionController editor={editor} />
+    </>
+  );
 };
 
 export const PublicSharePage = () => {

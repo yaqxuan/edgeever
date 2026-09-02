@@ -247,7 +247,9 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile
           bun run db:migrate:local
-          bun run test
+          # This Fork intentionally preserves .github/workflows/**. Exclude only
+          # upstream release-contract tests that assert the upstream-owned copies.
+          bun test --path-ignore-patterns='tests/e2e/**|scripts/(desktop-build-workflow|docker-release).test.mjs'
           bun run typecheck
           bun run build
 

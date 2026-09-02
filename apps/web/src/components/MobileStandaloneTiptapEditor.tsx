@@ -10,7 +10,7 @@ import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { mergeAttributes } from "@tiptap/core";
 import Placeholder from "@tiptap/extension-placeholder";
 import { TableKit } from "@tiptap/extension-table";
-import { createExcerpt, docToMarkdown, docToText, emptyDoc, getImageReferrerPolicy, isPdfAttachment, MergeDivider, PluginEmbed, type MemoDetail, type MemoEditSession, type Notebook, type TagSummary, type TiptapDoc } from "@edgeever/shared";
+import { createExcerpt, createPortableHtmlExtensions, docToMarkdown, docToText, emptyDoc, getImageReferrerPolicy, isPdfAttachment, MergeDivider, PluginEmbed, type MemoDetail, type MemoEditSession, type Notebook, type TagSummary, type TiptapDoc } from "@edgeever/shared";
 import { createEdgeEverMathematics } from "@edgeever/shared/mathematics";
 import { getMobileEditorInputAttributes, getMobileEditorPlaceholder } from "@edgeever/shared/mobile-editor";
 import {
@@ -48,6 +48,7 @@ import { createMarkdownImagePasteRule } from "@/lib/markdown-image-paste";
 import { preserveEmptyListIndentOnBackspace, wrapIndentedParagraphInList } from "@/lib/editor-shortcuts";
 import { ThemeBlock } from "./ThemeBlock";
 import { EditorTagPicker } from "./EditorTagPicker";
+import { PortableHtmlInteractionController } from "./editor/PortableHtmlInteractionController";
 import { listLocalTags } from "@/lib/local-mirror";
 
 const ProtectedExternalImage = Image.extend({
@@ -204,6 +205,7 @@ export const MobileStandaloneTiptapEditor = ({
       MergeDivider,
       PluginEmbed,
       ...createEdgeEverMathematics(),
+      ...createPortableHtmlExtensions(),
       ThemeBlock,
       ProtectedExternalImage.configure({
         allowBase64: false,
@@ -1021,6 +1023,7 @@ export const MobileStandaloneTiptapEditor = ({
 
         <div className="edgeever-mobile-tiptap-editor">
           <EditorContent editor={editor} />
+          <PortableHtmlInteractionController editor={editor} />
         </div>
 
         {saveState === "error" && fallbackMarkdown && <MobileEditorFallback markdown={fallbackMarkdown} />}

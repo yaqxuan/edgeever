@@ -475,3 +475,183 @@ describe("plugin embed Markdown compatibility", () => {
     expect(resolveMemoContentDoc(parsed, "fallback").content[0].type).toBe(PLUGIN_EMBED_NODE_TYPE);
   });
 });
+
+describe("portable safe HTML", () => {
+  const portableMarkdown = [
+    '<abbr title="令人震惊的；惊人的"><strong>staggering</strong></abbr> <sup>[1]</sup>',
+    "",
+    "<sub>x</sub> <mark>重点</mark> <u>下划线</u> <kbd>Ctrl</kbd>",
+    "",
+    "<details open>",
+    "<summary>展开说明</summary>",
+    "",
+    "这里有 **普通 Markdown**。",
+    "</details>",
+  ].join("\n");
+
+  test("round-trips every allowlisted mark and details content", () => {
+    const doc = markdownToDoc(portableMarkdown);
+    const marks = doc.content
+      .flatMap((node) => node.content ?? [])
+      .flatMap((node) => node.marks ?? [])
+      .map((mark) => mark.type);
+
+    expect(marks).toContain("edgeeverAbbr");
+    expect(marks).toContain("edgeeverSup");
+    expect(marks).toContain("edgeeverSub");
+    expect(marks).toContain("edgeeverMark");
+    expect(marks).toContain("edgeeverUnderline");
+    expect(marks).toContain("edgeeverKbd");
+    expect(doc.content[2]).toMatchObject({
+      type: "details",
+      attrs: { open: true },
+      content: [
+        { type: "detailsSummary" },
+        { type: "detailsContent", content: [{ type: "paragraph" }] },
+      ],
+    });
+
+    const serialized = docToMarkdown(doc);
+    expect(serialized).toContain('<abbr title="令人震惊的；惊人的">staggering</abbr>');
+    expect(serialized).toContain("<sup>[1]</sup>");
+    expect(serialized).toContain("<details open>");
+    expect(serialized).toContain("这里有 **普通 Markdown**。");
+    expect(docToMarkdown(markdownToDoc(serialized))).toBe(serialized);
+  });
+
+  test("keeps ordinary Markdown blocks inside details portable", () => {
+    const source = [
+      "<details>",
+      "<summary>更多内容</summary>",
+      "",
+      "- 第一项",
+      "- 第二项",
+      "",
+      "> 引用内容",
+      "",
+      "普通段落。",
+      "</details>",
+    ].join("\n");
+
+    const serialized = docToMarkdown(markdownToDoc(source));
+    expect(serialized).toContain("- 第一项\n- 第二项\n\n> 引用内容\n\n普通段落。");
+    expect(docToMarkdown(markdownToDoc(serialized))).toBe(serialized);
+  });
+
+  test("keeps nested abbr and strong semantics while escaping Chinese attributes", () => {
+    const source = '<abbr title="中文 &quot;释义&quot; &amp; 更多"><strong>word</strong></abbr>';
+    const doc = markdownToDoc(source);
+    const text = doc.content[0]?.content?.[0];
+
+    expect(text?.marks?.map((mark) => mark.type)).toEqual(expect.arrayContaining(["bold", "edgeeverAbbr"]));
+    expect(text?.marks?.find((mark) => mark.type === "edgeeverAbbr")?.attrs?.title)
+      .toBe('中文 "释义" & 更多');
+    expect(docToMarkdown(doc)).toContain('title="中文 &quot;释义&quot; &amp; 更多"');
+  });
+
+  test("recovers only allowlisted tags escaped by older editors", () => {
+    const source = '测试：\\<sup>[1]</sup> &lt;abbr title=&quot;释义&quot;&gt;word&lt;/abbr&gt; &lt;script&gt;bad&lt;/script&gt;';
+    const doc = markdownToDoc(source);
+    const serialized = docToMarkdown(doc);
+
+    expect(doc.content[0]?.content?.some((node) => node.marks?.some((mark) => mark.type === "edgeeverSup"))).toBe(true);
+    expect(serialized).toContain('<abbr title="释义">word</abbr>');
+    expect(serialized).toContain("&lt;script&gt;");
+  });
+
+  test("does not rewrite portable examples inside Markdown code", () => {
+    const source = [
+      "Inline: `<strong>not bold</strong>` and `\\<sup>[1]</sup>`.",
+      "Literal brackets: `\\<sup>\\[4\\]</sup>`.",
+      "",
+      "```html",
+      "<strong>still code</strong>",
+      "\\<sup>[2]</sup>",
+      "```",
+      "",
+      "    <strong>indented code</strong>",
+      "    \\<sup>[3]</sup>",
+    ].join("\n");
+
+    const serialized = docToMarkdown(markdownToDoc(source));
+    expect(serialized).toContain("`<strong>not bold</strong>`");
+    expect(serialized).toContain("`\\<sup>[1]</sup>`");
+    expect(serialized).toContain("`\\<sup>\\[4\\]</sup>`");
+    expect(serialized).toContain("<strong>still code</strong>");
+    expect(serialized).toContain("\\<sup>[2]</sup>");
+    expect(serialized).toContain("<strong>indented code</strong>");
+    expect(serialized).toContain("\\<sup>[3]</sup>");
+  });
+
+  test("drops unsafe attributes and leaves unapproved or malformed HTML as text", () => {
+    const source = [
+      '<abbr title="safe" onclick="steal()" style="color:red">word</abbr>',
+      '<mark onerror="steal()">highlight</mark>',
+      '<script>alert(1)</script>',
+      '<style>body { display: none }</style>',
+      '<iframe src="https://example.com"></iframe>',
+      '<img src="x" onerror="steal()">',
+      '<a href="javascript:alert(1)">danger</a>',
+      '<details open onclick="steal()" style="display:block"><summary onclick="steal()">安全摘要</summary>安全正文</details>',
+      '<sup onclick="steal()">[1]',
+      '普通比较：1 < 2 > 0',
+    ].join("\n\n");
+    const serialized = docToMarkdown(markdownToDoc(source));
+
+    expect(serialized).toContain('<abbr title="safe">word</abbr>');
+    expect(serialized).toContain("<mark>highlight</mark>");
+    expect(serialized).not.toContain('<abbr title="safe" onclick=');
+    expect(serialized).not.toContain("<mark onerror=");
+    expect(serialized).not.toContain("<abbr style=");
+    expect(serialized).not.toContain("<details open onclick=");
+    expect(serialized).not.toContain("<summary onclick=");
+    expect(serialized).not.toContain('<a href="javascript:');
+    expect(serialized).toContain("&lt;script&gt;");
+    expect(serialized).toContain("&lt;style&gt;");
+    expect(serialized).toContain("&lt;iframe");
+    expect(serialized).toContain("&lt;img src=");
+    expect(serialized).toContain("&lt;a href=");
+    expect(serialized).toContain("&lt;sup onclick=");
+    expect(serialized).toContain("<details open>");
+    expect(serialized).toContain("<summary>安全摘要</summary>");
+    expect(serialized).toContain("1 &lt; 2 &gt; 0");
+  });
+
+  test("prefers portable Markdown when legacy JSON kept the tags as plain text", () => {
+    const legacyDoc = markdownToDoc("This result was <abbr title=\"old\">staggering</abbr>.");
+    legacyDoc.content[0] = {
+      type: "paragraph",
+      content: [{ type: "text", text: 'This result was <abbr title="old">staggering</abbr>.' }],
+    };
+
+    const resolved = resolveMemoContentDoc(legacyDoc, 'This result was <abbr title="新释义">staggering</abbr>.');
+    expect(resolved.content[0]?.content?.some((node) => node.marks?.some((mark) => mark.type === "edgeeverAbbr")))
+      .toBe(true);
+  });
+
+  test("does not downgrade richer JSON when its Markdown copy contains portable HTML", () => {
+    const richDoc = {
+      type: "doc",
+      content: [{
+        type: "edgeeverThemeBlock",
+        attrs: { kind: "key-point" },
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Important [1]" }] }],
+      }],
+    };
+
+    expect(resolveMemoContentDoc(richDoc, "Important <sup>[1]</sup>")).toBe(richDoc);
+  });
+
+  test("keeps portable marks stable in a 20,000-word article", () => {
+    const markdown = Array.from({ length: 20_000 }, (_, index) => (
+      index % 1_000 === 0
+        ? `<abbr title="释义 ${index}">word${index}</abbr>`
+        : `word${index}`
+    )).join(" ");
+
+    const serialized = docToMarkdown(markdownToDoc(markdown));
+    expect(serialized.match(/word\d+/gu)).toHaveLength(20_000);
+    expect(serialized.match(/<abbr title=/gu)).toHaveLength(20);
+    expect(docToMarkdown(markdownToDoc(serialized))).toBe(serialized);
+  });
+});

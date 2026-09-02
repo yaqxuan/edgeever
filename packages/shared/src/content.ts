@@ -13,6 +13,21 @@ import {
 } from "./mathematics-markdown";
 import { projectNativeUnknownContentForMarkdown } from "./mobile-content-compatibility";
 import { PluginEmbed, PLUGIN_EMBED_NODE_TYPE } from "./plugin-embed";
+import {
+  containsPortableHtmlSource,
+  createPortableHtmlExtensions,
+  docContainsPortableHtml,
+  normalizePortableHtmlMarkdown,
+  normalizePortableHtmlSerialization,
+} from "./portable-html";
+
+export {
+  containsPortableHtmlSource,
+  createPortableHtmlExtensions,
+  docContainsPortableHtml,
+  normalizePortableHtmlMarkdown,
+  normalizePortableHtmlSerialization,
+} from "./portable-html";
 
 export { PluginEmbed, PLUGIN_EMBED_NODE_TYPE, pluginEmbedToMarkdown, normalizePluginEmbedAttributes } from "./plugin-embed";
 export type { PluginEmbedAttributes } from "./plugin-embed";
@@ -103,6 +118,7 @@ const markdownManager = new MarkdownManager({
     FileAttachment,
     MergeDivider,
     PluginEmbed,
+    ...createPortableHtmlExtensions(),
     ...createEdgeEverMarkdownMathematics(),
     Markdown.configure({
       markedOptions: { gfm: true },
@@ -115,7 +131,9 @@ export const markdownToDoc = (markdown: string): TiptapDoc => {
     return emptyDoc();
   }
 
-  return markdownManager.parse(markdown.replace(/\r\n?/g, "\n")) as TiptapDoc;
+  return markdownManager.parse(
+    normalizePortableHtmlMarkdown(markdown.replace(/\r\n?/g, "\n")),
+  ) as TiptapDoc;
 };
 
 const docContainsNodeType = (doc: TiptapDoc, nodeType: string): boolean => {
@@ -139,22 +157,35 @@ export const resolveMemoContentDoc = (
   const currentDoc = contentJson && Array.isArray(contentJson.content)
     ? upgradeStandaloneFileLinks(upgradeStandalonePdfLinks(upgradeLegacyAttachmentLinks(contentJson)))
     : emptyDoc();
-  if (
-    !contentMarkdown?.trim() ||
-    docContainsNodeType(currentDoc, "table") ||
-    docContainsNodeType(currentDoc, "taskList") ||
-    docContainsNodeType(currentDoc, "edgeeverThemeBlock") ||
-    docContainsNodeType(currentDoc, MERGE_DIVIDER_NODE_TYPE) ||
-    docContainsNodeType(currentDoc, PLUGIN_EMBED_NODE_TYPE) ||
-    docContainsNodeType(currentDoc, BLOCK_MATH_NODE_TYPE) ||
-    docContainsNodeType(currentDoc, INLINE_MATH_NODE_TYPE)
+  const requiresRichJsonPrecedence =
+    docContainsNodeType(currentDoc, "table")
+    || docContainsNodeType(currentDoc, "taskList")
+    || docContainsNodeType(currentDoc, "edgeeverThemeBlock")
+    || docContainsNodeType(currentDoc, MERGE_DIVIDER_NODE_TYPE)
+    || docContainsNodeType(currentDoc, PLUGIN_EMBED_NODE_TYPE)
+    || docContainsNodeType(currentDoc, BLOCK_MATH_NODE_TYPE)
+    || docContainsNodeType(currentDoc, INLINE_MATH_NODE_TYPE)
     || docContainsNodeType(currentDoc, PDF_ATTACHMENT_NODE_TYPE)
-    || docContainsNodeType(currentDoc, FILE_ATTACHMENT_NODE_TYPE)
+    || docContainsNodeType(currentDoc, FILE_ATTACHMENT_NODE_TYPE);
+
+  // Rebuilding one of these richer documents from its compatibility Markdown
+  // can turn theme/plugin/embed nodes into plain blocks. Preserve the complete
+  // JSON document even when its Markdown copy contains legacy portable tags.
+  if (!contentMarkdown?.trim() || requiresRichJsonPrecedence) return currentDoc;
+
+  let markdownDoc: TiptapDoc | null = null;
+  if (
+    contentMarkdown?.trim()
+    && containsPortableHtmlSource(contentMarkdown)
+    && !docContainsPortableHtml(currentDoc)
   ) {
-    return currentDoc;
+    markdownDoc = markdownToDoc(contentMarkdown);
+    if (docContainsPortableHtml(markdownDoc)) {
+      return markdownDoc;
+    }
   }
 
-  const markdownDoc = markdownToDoc(contentMarkdown);
+  markdownDoc ??= markdownToDoc(contentMarkdown);
   // Some older saves left an empty JSON document behind while retaining the
   // real body in Markdown. Treat that as a compatibility case too; otherwise
   // the editor can show the Markdown body while list excerpts see an empty
@@ -325,8 +356,10 @@ export const docToMarkdown = (doc: unknown): string => {
   const serializableDoc = protectLiteralDollarPairs(projectNativeUnknownContentForMarkdown(
     stripEditorOnlyNodes(doc) as TiptapDoc
   ));
-  return markdownManager
-    .serialize(serializableDoc as Parameters<typeof markdownManager.serialize>[0])
+  const markdown = markdownManager.serialize(
+    serializableDoc as Parameters<typeof markdownManager.serialize>[0],
+  );
+  return normalizePortableHtmlSerialization(markdown)
     .replaceAll(LITERAL_DOLLAR_PLACEHOLDER, "\\$");
 };
 
