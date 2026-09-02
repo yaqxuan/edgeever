@@ -13,6 +13,7 @@ export const PORTABLE_SUB_MARK_TYPE = "edgeeverSub" as const;
 export const PORTABLE_MARK_MARK_TYPE = "edgeeverMark" as const;
 export const PORTABLE_UNDERLINE_MARK_TYPE = "edgeeverUnderline" as const;
 export const PORTABLE_KBD_MARK_TYPE = "edgeeverKbd" as const;
+export const PORTABLE_TEXT_STYLE_MARK_TYPE = "edgeeverTextStyle" as const;
 export const PORTABLE_DETAILS_NODE_TYPE = "details" as const;
 export const PORTABLE_DETAILS_SUMMARY_NODE_TYPE = "detailsSummary" as const;
 export const PORTABLE_DETAILS_CONTENT_NODE_TYPE = "detailsContent" as const;
@@ -24,6 +25,7 @@ const PORTABLE_TAG_NAMES = [
   "mark",
   "u",
   "kbd",
+  "span",
   "details",
   "summary",
   "strong",
@@ -38,6 +40,7 @@ const PORTABLE_MARK_TYPES = new Set<string>([
   PORTABLE_MARK_MARK_TYPE,
   PORTABLE_UNDERLINE_MARK_TYPE,
   PORTABLE_KBD_MARK_TYPE,
+  PORTABLE_TEXT_STYLE_MARK_TYPE,
 ]);
 const PORTABLE_NODE_TYPES = new Set<string>([
   PORTABLE_DETAILS_NODE_TYPE,
@@ -85,6 +88,78 @@ const readQuotedAttribute = (attributes: string, name: string) => {
   const pattern = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i");
   const match = pattern.exec(attributes);
   return match ? normalizePlainTextAttribute(match[1] ?? match[2] ?? "") : "";
+};
+
+/**
+ * Keeps the portable `span` format deliberately small. These values are safe
+ * to place in an inline style attribute and work across the web, PWA, and
+ * public-share readers.
+ */
+const normalizePortableColor = (value: string) => {
+  const color = value.trim().replace(/\s+/gu, " ").toLowerCase();
+  if (!color || color.length > 64) return "";
+  if (/^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/iu.test(color)) return color;
+  if (/^[a-z]{1,20}$/iu.test(color)) return color;
+  return /^(?:rgba?|hsla?)\(\s*[\d.]+%?(?:\s*,\s*|\s+)[\d.]+%?(?:\s*,\s*|\s+)[\d.]+%?(?:(?:\s*,\s*|\s*\/\s*)[\d.]+%?)?\s*\)$/iu.test(color)
+    ? color
+    : "";
+};
+
+const normalizePortableFontSize = (value: string) => {
+  const match = /^(\d+(?:\.\d+)?)(px|%|em|rem)$/iu.exec(value.trim());
+  if (!match) return "";
+
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const range = unit === "px"
+    ? [8, 72]
+    : unit === "%"
+      ? [50, 300]
+      : [0.5, 3];
+  return Number.isFinite(amount) && amount >= range[0] && amount <= range[1]
+    ? `${amount}${unit}`
+    : "";
+};
+
+const parsePortableTextStyle = (attributes: string): Record<string, unknown> => {
+  const style = readQuotedAttribute(attributes, "style");
+  const result: Record<string, string> = {};
+
+  for (const declaration of style.split(";")) {
+    const separator = declaration.indexOf(":");
+    if (separator < 1) continue;
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const value = declaration.slice(separator + 1).trim();
+    if (property === "color") {
+      const color = normalizePortableColor(value);
+      if (color) result.color = color;
+    } else if (property === "background-color") {
+      const backgroundColor = normalizePortableColor(value);
+      if (backgroundColor) result.backgroundColor = backgroundColor;
+    } else if (property === "font-size") {
+      const fontSize = normalizePortableFontSize(value);
+      if (fontSize) result.fontSize = fontSize;
+    }
+  }
+
+  return result;
+};
+
+const renderPortableTextStyle = (attributes: Record<string, unknown>): Record<string, string> => {
+  const color = normalizePortableColor(typeof attributes.color === "string" ? attributes.color : "");
+  const backgroundColor = normalizePortableColor(
+    typeof attributes.backgroundColor === "string" ? attributes.backgroundColor : "",
+  );
+  const fontSize = normalizePortableFontSize(
+    typeof attributes.fontSize === "string" ? attributes.fontSize : "",
+  );
+  const declarations = [
+    color && `color: ${color}`,
+    backgroundColor && `background-color: ${backgroundColor}`,
+    fontSize && `font-size: ${fontSize}`,
+  ].filter(Boolean);
+
+  return declarations.length > 0 ? { style: declarations.join("; ") } : {};
 };
 
 const hasBooleanAttribute = (attributes: string, name: string) =>
@@ -216,7 +291,7 @@ export const normalizePortableHtmlSerialization = (markdown: string) =>
   transformMarkdownProse(
     markdown,
     (segment) => segment.replace(
-      /<(abbr|sup|sub|mark|u|kbd)\b([^>]*)>([^<\r\n]*)<\/\1\s*>/giu,
+      /<(abbr|sup|sub|mark|u|kbd|span)\b([^>]*)>([^<\r\n]*)<\/\1\s*>/giu,
       (_match, tag: string, attributes: string, content: string) =>
         `<${tag}${attributes}>${content.replace(/\\([\[\]])/gu, "$1")}</${tag}>`,
     ),
@@ -224,7 +299,7 @@ export const normalizePortableHtmlSerialization = (markdown: string) =>
 
 export const containsPortableHtmlSource = (markdown: string) => {
   const normalized = normalizePortableHtmlMarkdown(markdown);
-  return new RegExp(`<(?:abbr|sup|sub|mark|u|kbd|details)\\b`, "i").test(normalized);
+  return new RegExp(`<(?:abbr|sup|sub|mark|u|kbd|span|details)\\b`, "i").test(normalized);
 };
 
 export const docContainsPortableHtml = (doc: unknown): boolean => {
@@ -248,7 +323,7 @@ type PortableInlineToken = MarkdownToken & {
 
 type PortableMarkDefinition = {
   name: string;
-  tag: "abbr" | "sup" | "sub" | "mark" | "u" | "kbd";
+  tag: "abbr" | "sup" | "sub" | "mark" | "u" | "kbd" | "span";
   className: string;
   parseAttributes?: (source: string) => Record<string, unknown>;
   renderAttributes?: (attributes: Record<string, unknown>) => Record<string, string>;
@@ -265,18 +340,35 @@ const createPortableHtmlMark = ({
   inclusive: false,
 
   addAttributes() {
-    return tag === "abbr"
-      ? {
+    if (tag === "abbr") {
+      return {
           title: {
             default: "",
             parseHTML: (element: HTMLElement) => normalizePlainTextAttribute(element.getAttribute("title") ?? ""),
           },
-        }
-      : {};
+      };
+    }
+    if (tag === "span") {
+      return {
+        color: {
+          default: null,
+          parseHTML: (element: HTMLElement) => parsePortableTextStyle(element.getAttribute("style") ?? "").color ?? null,
+        },
+        backgroundColor: {
+          default: null,
+          parseHTML: (element: HTMLElement) => parsePortableTextStyle(element.getAttribute("style") ?? "").backgroundColor ?? null,
+        },
+        fontSize: {
+          default: null,
+          parseHTML: (element: HTMLElement) => parsePortableTextStyle(element.getAttribute("style") ?? "").fontSize ?? null,
+        },
+      };
+    }
+    return {};
   },
 
   parseHTML() {
-    return [{ tag }];
+    return [{ tag: tag === "span" ? "span[style]" : tag }];
   },
 
   renderHTML({ HTMLAttributes }) {
@@ -303,7 +395,7 @@ const createPortableHtmlMark = ({
   renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
     const attributes = renderAttributes((node.attrs ?? {}) as Record<string, unknown>);
     const serializedAttributes = Object.entries(attributes)
-      .filter(([key]) => key === "title")
+      .filter(([key]) => key === "title" || (tag === "span" && key === "style"))
       .map(([key, value]) => ` ${key}="${escapeHtmlAttribute(value)}"`)
       .join("");
     return `<${tag}${serializedAttributes}>${helpers.renderChildren(node)}</${tag}>`;
@@ -325,12 +417,14 @@ const createPortableHtmlMark = ({
     tokenize(source: string, _tokens: MarkdownToken[], lexer: { inlineTokens: (value: string) => MarkdownToken[] }) {
       const match = new RegExp(`^<${tag}\\b([^>]*)>([^\\r\\n]*?)<\\/${tag}\\s*>`, "i").exec(source);
       if (!match) return undefined;
+      const portableAttributes = parseAttributes(match[1]);
+      if (tag === "span" && Object.keys(portableAttributes).length === 0) return undefined;
       return {
         type: name,
         raw: match[0],
         text: match[2],
         tokens: lexer.inlineTokens(match[2]),
-        portableAttributes: parseAttributes(match[1]),
+        portableAttributes,
       };
     },
   },
@@ -382,6 +476,14 @@ const PortableKbd = createPortableHtmlMark({
   name: PORTABLE_KBD_MARK_TYPE,
   tag: "kbd",
   className: "edgeever-portable-kbd",
+});
+
+const PortableTextStyle = createPortableHtmlMark({
+  name: PORTABLE_TEXT_STYLE_MARK_TYPE,
+  tag: "span",
+  className: "edgeever-portable-text-style",
+  parseAttributes: parsePortableTextStyle,
+  renderAttributes: renderPortableTextStyle,
 });
 
 type PortableDetailsToken = MarkdownToken & {
@@ -543,6 +645,7 @@ export const createPortableHtmlExtensions = () => [
   PortableMark.configure(),
   PortableUnderline.configure(),
   PortableKbd.configure(),
+  PortableTextStyle.configure(),
   PortableDetails.configure({
     persist: false,
     openClassName: "is-open",

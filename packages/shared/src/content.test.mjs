@@ -480,7 +480,7 @@ describe("portable safe HTML", () => {
   const portableMarkdown = [
     '<abbr title="令人震惊的；惊人的"><strong>staggering</strong></abbr> <sup>[1]</sup>',
     "",
-    "<sub>x</sub> <mark>重点</mark> <u>下划线</u> <kbd>Ctrl</kbd>",
+    "<sub>x</sub> <mark>重点</mark> <u>下划线</u> <kbd>Ctrl</kbd> <span style=\"color: #dc2626; background-color: rgb(254, 242, 242); font-size: 18px\">醒目文字</span>",
     "",
     "<details open>",
     "<summary>展开说明</summary>",
@@ -502,6 +502,7 @@ describe("portable safe HTML", () => {
     expect(marks).toContain("edgeeverMark");
     expect(marks).toContain("edgeeverUnderline");
     expect(marks).toContain("edgeeverKbd");
+    expect(marks).toContain("edgeeverTextStyle");
     expect(doc.content[2]).toMatchObject({
       type: "details",
       attrs: { open: true },
@@ -514,6 +515,7 @@ describe("portable safe HTML", () => {
     const serialized = docToMarkdown(doc);
     expect(serialized).toContain('<abbr title="令人震惊的；惊人的">staggering</abbr>');
     expect(serialized).toContain("<sup>[1]</sup>");
+    expect(serialized).toContain('<span style="color: #dc2626; background-color: rgb(254, 242, 242); font-size: 18px">醒目文字</span>');
     expect(serialized).toContain("<details open>");
     expect(serialized).toContain("这里有 **普通 Markdown**。");
     expect(docToMarkdown(markdownToDoc(serialized))).toBe(serialized);
@@ -587,6 +589,8 @@ describe("portable safe HTML", () => {
     const source = [
       '<abbr title="safe" onclick="steal()" style="color:red">word</abbr>',
       '<mark onerror="steal()">highlight</mark>',
+      '<span style="color: #dc2626; background-color: #fef08a; font-size: 18px; position: fixed; background-image: url(https://example.com/x)" onclick="steal()">safe styled text</span>',
+      '<span style="color: expression(alert(1)); background-color: url(https://example.com/x); font-size: 999px">unsafe styled text</span>',
       '<script>alert(1)</script>',
       '<style>body { display: none }</style>',
       '<iframe src="https://example.com"></iframe>',
@@ -600,9 +604,12 @@ describe("portable safe HTML", () => {
 
     expect(serialized).toContain('<abbr title="safe">word</abbr>');
     expect(serialized).toContain("<mark>highlight</mark>");
+    expect(serialized).toContain('<span style="color: #dc2626; background-color: #fef08a; font-size: 18px">safe styled text</span>');
     expect(serialized).not.toContain('<abbr title="safe" onclick=');
     expect(serialized).not.toContain("<mark onerror=");
     expect(serialized).not.toContain("<abbr style=");
+    expect(serialized).not.toContain('<span style="color: expression(');
+    expect(serialized).toContain('&lt;span style="color: expression(');
     expect(serialized).not.toContain("<details open onclick=");
     expect(serialized).not.toContain("<summary onclick=");
     expect(serialized).not.toContain('<a href="javascript:');
