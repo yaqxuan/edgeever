@@ -10,9 +10,10 @@ import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { mergeAttributes } from "@tiptap/core";
 import Placeholder from "@tiptap/extension-placeholder";
 import { TableKit } from "@tiptap/extension-table";
-import { createExcerpt, createPortableHtmlExtensions, docToMarkdown, docToText, emptyDoc, getImageReferrerPolicy, isPdfAttachment, MergeDivider, PluginEmbed, type MemoDetail, type MemoEditSession, type Notebook, type TagSummary, type TiptapDoc } from "@edgeever/shared";
+import { createExcerpt, createPortableHtmlExtensions, docToMarkdown, docToText, emptyDoc, getImageReferrerPolicy, ImageGallery, isPdfAttachment, MergeDivider, PluginEmbed, type MemoDetail, type MemoEditSession, type Notebook, type TagSummary, type TiptapDoc } from "@edgeever/shared";
 import { createEdgeEverMathematics } from "@edgeever/shared/mathematics";
 import { getMobileEditorInputAttributes, getMobileEditorPlaceholder } from "@edgeever/shared/mobile-editor";
+import { EdgeEverLink } from "@edgeever/shared/editor-link";
 import {
   MobileEditorFallback,
   MobileEditorHeader,
@@ -197,7 +198,8 @@ export const MobileStandaloneTiptapEditor = ({
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({ link: false }),
+      EdgeEverLink,
       PdfAttachment,
       FileAttachment,
       TaskList,
@@ -207,6 +209,7 @@ export const MobileStandaloneTiptapEditor = ({
       ...createEdgeEverMathematics(),
       ...createPortableHtmlExtensions(),
       ThemeBlock,
+      ImageGallery,
       ProtectedExternalImage.configure({
         allowBase64: false,
         inline: false,

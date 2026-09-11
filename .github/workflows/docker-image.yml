@@ -76,7 +76,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build local image
-        run: docker build --tag edgeever:ci .
+        run: docker build --build-arg EDGE_EVER_BUILD_ID="${GITHUB_SHA}" --tag edgeever:ci .
 
       - name: Start container
         run: |
@@ -94,8 +94,15 @@ jobs:
             sleep 1
           done
           echo "${health}" | jq -e '.ok == true and .runtime == "self-hosted-bun" and .authMode == "required"'
+          curl --fail --silent --show-error http://127.0.0.1:8787/ | grep -F '<!doctype html>'
           docker exec edgeever-ci test -f /data/edgeever.sqlite
           docker exec edgeever-ci test -d /data/resources
+          docker exec edgeever-ci test -s /app/scripts/self-hosted-server.js
+          docker exec edgeever-ci test -s /app/scripts/self-hosted-server.mjs
+          docker exec edgeever-ci cmp -s /app/scripts/self-hosted-server.js /app/scripts/self-hosted-server.mjs
+          docker exec edgeever-ci test ! -e /app/node_modules
+          docker exec edgeever-ci test ! -e /app/apps/api
+          docker exec edgeever-ci test ! -e /app/packages
 
       - name: Stop container gracefully
         run: |
@@ -183,6 +190,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-args: |
+            EDGE_EVER_BUILD_ID=${{ github.sha }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.image.outputs.tags }}
@@ -199,6 +208,33 @@ jobs:
           docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:${{ steps.image.outputs.audit_tag }}"
           docker buildx imagetools inspect --raw "${GHCR_IMAGE_NAME}:${{ steps.image.outputs.audit_tag }}" |
             jq -e '([.manifests[].platform.architecture] | index("amd64") != null) and ([.manifests[].platform.architecture] | index("arm64") != null)'
+          docker pull "${GHCR_IMAGE_NAME}:${{ steps.image.outputs.audit_tag }}"
+
+          container_name=edgeever-published-audit
+          trap 'docker rm --force "${container_name}" >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name "${container_name}" \
+            --env EDGE_EVER_AUTH_PASSWORD=published-container-audit-password \
+            --publish 127.0.0.1:8787:8787 \
+            "${GHCR_IMAGE_NAME}:${{ steps.image.outputs.audit_tag }}"
+
+          for attempt in $(seq 1 60); do
+            if health="$(curl --fail --silent --show-error http://127.0.0.1:8787/api/health)"; then
+              break
+            fi
+            sleep 1
+          done
+          echo "${health}" | jq -e '.ok == true and .runtime == "self-hosted-bun" and .authMode == "required"'
+          curl --fail --silent --show-error http://127.0.0.1:8787/ | grep -F '<!doctype html>'
+          docker exec "${container_name}" test -s /app/scripts/self-hosted-server.js
+          docker exec "${container_name}" test -s /app/scripts/self-hosted-server.mjs
+          docker exec "${container_name}" cmp -s /app/scripts/self-hosted-server.js /app/scripts/self-hosted-server.mjs
+          docker exec "${container_name}" test ! -e /app/node_modules
+          docker exec "${container_name}" test ! -e /app/apps/api
+          docker exec "${container_name}" test ! -e /app/packages
+          docker stop --timeout 30 "${container_name}"
+          docker logs "${container_name}" | grep -F '[self-hosted] shutdown complete'
+          docker rm "${container_name}"
+          trap - EXIT
 
   release-audit:
     if: github.repository == 'tianma-if/edgeever' && github.event_name == 'release'

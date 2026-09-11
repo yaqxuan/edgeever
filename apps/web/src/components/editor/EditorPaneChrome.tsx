@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { autoUpdate, useFloating } from "@floating-ui/react-dom";
 import { FileDown, Pencil, Save, Trash2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
 import type { getNotebookMoveOptions } from "@/lib/app-helpers";
 import type { ResourceMenuTarget } from "./useEditorResourceActions";
+import { imageResourceMenuPosition } from "./image-resource-menu-position";
 
 export const IconTooltip = ({ label, children }: { label: string; children: ReactNode }) => (
   <TooltipProvider delayDuration={0} skipDelayDuration={0}>
@@ -48,7 +50,7 @@ export const NoteLinkInteractionHint = ({
 }) => createPortal(
   <div
     role="tooltip"
-    className="pointer-events-none fixed z-[100] whitespace-nowrap rounded-md bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-white shadow-md"
+    className="pointer-events-none fixed z-[100] whitespace-nowrap rounded-md bg-[var(--tooltip-bg)] px-2.5 py-1.5 text-xs font-medium text-[var(--tooltip-fg)] shadow-md"
     style={{
       left: position.left,
       top: position.top,
@@ -90,14 +92,26 @@ export const ResourceActionMenu = ({
   onDelete: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
-}) => createPortal(
+}) => {
+  const imageElement = target.kind === "image" ? target.element : undefined;
+  const { refs, floatingStyles, isPositioned } = useFloating({
+    ...imageResourceMenuPosition,
+    elements: { reference: imageElement ?? null },
+    whileElementsMounted: autoUpdate,
+  });
+
+  return createPortal(
   <TooltipProvider delayDuration={0} skipDelayDuration={0}>
     <div
+      ref={refs.setFloating}
       data-edgeever-resource-menu
       role="toolbar"
       aria-label={labels.download}
-      className="fixed z-[110] flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
-      style={{
+      className="fixed z-[110] flex items-center gap-1 rounded-lg border border-slate-200 bg-card p-1 shadow-lg"
+      style={imageElement ? {
+        ...floatingStyles,
+        visibility: isPositioned ? "visible" : "hidden",
+      } : {
         left: target.position.left,
         top: target.position.top,
         transform: target.position.placement === "inside-bottom-right"
@@ -108,6 +122,10 @@ export const ResourceActionMenu = ({
       }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onFocusCapture={onMouseEnter}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) onMouseLeave();
+      }}
     >
       <IconTooltip label={labels.download}>
         <Button type="button" size="sm" variant="ghost" aria-label={labels.download} onClick={onDownload}>
@@ -144,7 +162,8 @@ export const ResourceActionMenu = ({
     </div>
   </TooltipProvider>,
   document.body,
-);
+  );
+};
 
 type NotebookMoveOption = ReturnType<typeof getNotebookMoveOptions>[number];
 

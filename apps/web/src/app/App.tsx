@@ -6,6 +6,7 @@ import { PwaUpdateNotice } from "@/components/PwaUpdateNotice";
 import { PwaInstallProvider } from "@/components/PwaInstallContext";
 import { PwaIosPrompt } from "@/components/PwaIosPrompt";
 import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   api,
   cacheDesktopSession,
@@ -171,7 +172,7 @@ const AuthenticatedWorkspace = () => {
     if (desktopScopeError) {
       return (
         <main className="flex h-[100dvh] items-center justify-center bg-slate-50 px-4 text-slate-900">
-          <section className="w-full max-w-md rounded-xl border border-rose-200 bg-white p-6 shadow-sm">
+          <section className="w-full max-w-md rounded-xl border border-rose-200 bg-card p-6 shadow-sm">
             <p className="text-sm leading-6 text-rose-800">{t("login.desktopScopeUnavailable")}</p>
             <Button className="mt-4" variant="outline" onClick={() => setDesktopScopeAttempt((value) => value + 1)}>
               {t("login.desktopScopeRetry")}
@@ -217,20 +218,24 @@ export const App = () => {
   }, []);
 
   return (
-    <PwaInstallProvider>
-      <Routes>
-        <Route path="/share/:token" element={<Suspense fallback={<AuthLoadingScreen />}><PublicSharePage /></Suspense>} />
-        <Route path={EVERNOTE_MIGRATION_PATH} element={<EvernoteMigrationRoute />} />
-        <Route path="/" element={<AuthenticatedWorkspace />} />
-        <Route path="/settings" element={<AuthenticatedWorkspace />} />
-        <Route path="/plugins" element={<AuthenticatedWorkspace />} />
-        <Route path="/plugins/:pluginId" element={<AuthenticatedWorkspace />} />
-        <Route path="/templates" element={<AuthenticatedWorkspace />} />
-        <Route path="/ai-prompts" element={<AuthenticatedWorkspace />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-      <PwaUpdateNotice />
-      <PwaIosPrompt />
-    </PwaInstallProvider>
+    <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+      <PwaInstallProvider>
+        <Routes>
+          <Route path="/share/:token" element={<Suspense fallback={<AuthLoadingScreen />}><PublicSharePage /></Suspense>} />
+          <Route path={EVERNOTE_MIGRATION_PATH} element={<EvernoteMigrationRoute />} />
+          <Route path="/" element={<AuthenticatedWorkspace />} />
+          <Route path="/settings" element={<AuthenticatedWorkspace />} />
+          <Route path="/plugins" element={<AuthenticatedWorkspace />} />
+          <Route path="/plugins/:pluginId" element={<AuthenticatedWorkspace />} />
+          <Route path="/templates" element={<AuthenticatedWorkspace />} />
+          <Route path="/ai-prompts" element={<AuthenticatedWorkspace />} />
+          <Route path="/companion" element={<AuthenticatedWorkspace />} />
+          <Route path="/execution-center" element={<AuthenticatedWorkspace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+        <PwaUpdateNotice />
+        <PwaIosPrompt />
+      </PwaInstallProvider>
+    </TooltipProvider>
   );
 };

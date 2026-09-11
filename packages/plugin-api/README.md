@@ -18,6 +18,18 @@ export default definePlugin({
 
 The package ships ESM JavaScript and TypeScript declarations. Plugin bundles must produce a single `main.js` file without relative imports before distribution. See the EdgeEver plugin development guide for the Manifest format, permissions, settings Schema, release assets, and marketplace verification rules.
 
+Desktop plugins can declare the `schedules` permission and idempotently schedule one of their own registered commands:
+
+```ts
+context.commands.register({ id: "refresh", title: "Refresh", run: refresh });
+await context.schedules.upsert({
+  key: "hourly-refresh",
+  name: "Hourly refresh",
+  commandId: "refresh",
+  cronExpression: "0 * * * *",
+});
+```
+
 Conflict-safe Markdown edits use the note baseline returned by `context.notes.get()`:
 
 ```ts
@@ -31,6 +43,8 @@ await context.ui.openNote(noteId, { search: "New task" }); // requires ui:naviga
 ```
 
 Bulk-indexing plugins can page through `context.notes.queryContent()`. The API also exposes workspace templates, full live-editor reads and range edits, template mutation events, and programmatic opening of a plugin's own registered panels.
+
+Dashboard and workflow panels can ask EdgeEver to render system chrome (header actions, search, tabs, selects, empty states) through `mount` context `shell.set()`, while the plugin keeps owning the body DOM.
 
 Canvas-style plugins can read and conflict-safely replace resource bytes, open full-screen guarded panels with JSON state, and register constrained block embed renderers:
 

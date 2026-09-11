@@ -1077,6 +1077,18 @@ const baseWorkspaceStyles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
   },
+  systemInfoNotice: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 2,
+  },
+  systemInfoNoticeText: {
+    color: "#64748b",
+    flex: 1,
+    fontSize: 10,
+    lineHeight: 15,
+  },
   systemInfoRow: {
     borderBottomColor: "#e2e8f0",
     borderBottomWidth: 1,
@@ -1901,6 +1913,12 @@ const baseWorkspaceStyles = StyleSheet.create({
   },
   detailTagsPlaceholder: {
     color: "#94a3b8",
+  },
+  detailTimestamps: {
+    color: "#94a3b8",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
   },
   detailDivider: {
     backgroundColor: "#e2e8f0",

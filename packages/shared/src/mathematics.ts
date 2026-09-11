@@ -13,6 +13,9 @@ export {
 
 const EdgeEverInlineMath = InlineMath.extend({
   markdownTokenizer: edgeEverInlineMathMarkdownTokenizer,
+  renderMarkdown: (node) => /^\d+(?:[.,]\d+)?$/u.test(node.attrs?.latex || "")
+    ? `\\(${node.attrs?.latex}\\)`
+    : `$${node.attrs?.latex || ""}$`,
 });
 
 const EdgeEverBlockMath = BlockMath.extend({

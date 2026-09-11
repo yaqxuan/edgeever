@@ -11,7 +11,7 @@ const isEscaped = (source: string, index: number) => {
   return backslashCount % 2 === 1;
 };
 
-const findClosingDelimiter = (source: string, delimiter: "$" | "$$", from: number) => {
+const findClosingDelimiter = (source: string, delimiter: string, from: number) => {
   for (let index = from; index <= source.length - delimiter.length; index += 1) {
     if (source.startsWith(delimiter, index) && !isEscaped(source, index)) {
       return index;
@@ -23,8 +23,24 @@ const findClosingDelimiter = (source: string, delimiter: "$" | "$$", from: numbe
 export const edgeEverInlineMathMarkdownTokenizer = {
   name: INLINE_MATH_NODE_TYPE,
   level: "inline" as const,
-  start: (source: string) => source.indexOf("$"),
+  start: (source: string) => source.search(/\$|\\[()[\]]/u),
   tokenize: (source: string) => {
+    // Markdown serialization escapes both a literal backslash and square bracket.
+    // Consume them together so the escaped bracket cannot become a math opener.
+    if (source.startsWith("\\\\\\[") || source.startsWith("\\\\\\]")) {
+      return { type: "text", raw: source.slice(0, 4), text: source.slice(2, 4) };
+    }
+    if (source.startsWith("\\(")) {
+      const closingIndex = findClosingDelimiter(source, "\\)", 2);
+      if (closingIndex < 0) return { type: "text", raw: "\\(", text: "\\(" };
+      const latex = source.slice(2, closingIndex).trim();
+      if (!latex || latex.includes("\n")) return { type: "text", raw: "\\(", text: "\\(" };
+      return { type: INLINE_MATH_NODE_TYPE, raw: source.slice(0, closingIndex + 2), latex };
+    }
+    // A delimiter not consumed as math is visible source, not a Markdown escape.
+    if (/^\\[)[\]]/u.test(source)) {
+      return { type: "text", raw: source.slice(0, 2), text: source.slice(0, 2) };
+    }
     if (!source.startsWith("$") || source.startsWith("$$")) {
       return undefined;
     }
@@ -57,8 +73,15 @@ export const edgeEverInlineMathMarkdownTokenizer = {
 export const edgeEverBlockMathMarkdownTokenizer = {
   name: BLOCK_MATH_NODE_TYPE,
   level: "block" as const,
-  start: (source: string) => source.indexOf("$$"),
+  start: (source: string) => source.search(/^(?:\$\$|\\\[)/mu),
   tokenize: (source: string) => {
+    if (source.startsWith("\\[")) {
+      const closingIndex = findClosingDelimiter(source, "\\]", 2);
+      if (closingIndex < 0) return undefined;
+      const latex = source.slice(2, closingIndex).trim();
+      if (!latex) return undefined;
+      return { type: BLOCK_MATH_NODE_TYPE, raw: source.slice(0, closingIndex + 2), latex };
+    }
     if (!source.startsWith("$$") || source.startsWith("$$$")) {
       return undefined;
     }
@@ -110,7 +133,10 @@ const MarkdownInlineMath = Node.create({
     attrs: { latex: token.latex },
   }),
 
-  renderMarkdown: (node) => `$${node.attrs?.latex || ""}$`,
+  // Numeric inline formulas must not round-trip through the currency guard.
+  renderMarkdown: (node) => /^\d+(?:[.,]\d+)?$/u.test(node.attrs?.latex || "")
+    ? `\\(${node.attrs?.latex}\\)`
+    : `$${node.attrs?.latex || ""}$`,
   markdownTokenizer: edgeEverInlineMathMarkdownTokenizer,
 });
 

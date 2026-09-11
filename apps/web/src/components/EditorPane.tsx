@@ -12,27 +12,19 @@ import * as m from "motion/react-m";
 import "katex/dist/katex.min.css";
 import {
   ChevronLeft,
-  ChevronRight,
-  ChevronDown,
   History,
   RotateCcw,
   Trash2,
   Tags,
-  Save,
   ReplaceAll,
-  MoreHorizontal,
-  Maximize2,
-  Minimize2,
   Paperclip,
   Pencil,
   Sparkles,
-  Search,
   Type,
   X,
   Check,
   CircleAlert,
   LoaderCircle,
-  Info,
   FileDown,
   FileCode2,
   Printer,
@@ -43,28 +35,44 @@ import {
   LockOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { GitHubRepositoryLink } from "@/components/GitHubRepositoryLink";
 import { ClipboardCopyNotice } from "@/components/ClipboardCopyNotice";
+import { MemoEditorHeaderActions } from "@/components/MemoEditorHeaderActions";
+import { MemoEditorMetadataRow } from "@/components/MemoEditorMetadataRow";
+import { MemoEditorTopRowLeading } from "@/components/MemoEditorTopRowLeading";
+import {
+  MEMO_EDITOR_TITLE_REGION_CLASS_NAME,
+  MEMO_EDITOR_TOP_ROW_CLASS_NAME,
+} from "@/components/MemoEditorChromeDensity";
+import { MemoTitleInput } from "@/components/MemoTitleInput";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { EditorToolbar } from "./EditorToolbar";
 import { EditorOutline } from "./EditorOutline";
-import { EditorTagPicker } from "./EditorTagPicker";
 import { useAiBubbleMenu } from "./editor/useAiBubbleMenu";
+import {
+  createEditorInstanceMemoIdentity,
+  isEditorInstanceHydratedForMemo,
+  reconcileEditorInstanceMemoIdentity,
+  remapEditorInstanceMemoIdentity,
+} from "./editor/editor-instance-identity";
+import {
+  createMarkdownModeSnapshot,
+  isMarkdownSourceUnchanged,
+  resolveMarkdownModeContent,
+  type MarkdownModeSnapshot,
+} from "./editor/editor-mode-content";
 import {
   ImageUploadPlaceholderExtension,
   addImageUploadPlaceholder,
   createImageUploadPlaceholder,
   removeImageUploadPlaceholder,
   waitForImageSourceReady,
+  updateImageUploadPlaceholder,
 } from "./editor/image-upload-placeholder";
 import {
   clampResourceInsertionTarget,
@@ -72,6 +80,7 @@ import {
   getResourceInsertionTarget,
   shouldSelectInsertedResources,
 } from "@/lib/resource-insertion-target";
+import { insertUploadedResources } from "@/lib/resource-insertion";
 import {
   createSlashCommandExtension,
   type SlashCommandActions,
@@ -82,7 +91,6 @@ import {
   type NoteLinkSuggestionLabels,
 } from "./editor/NoteLinkSuggestion";
 import { WeChatIcon } from "./WeChatIcon";
-import { ThemeToggle } from "./ThemeToggle";
 import { useEditorTheme, useMarkdownTheme } from "./ThemeProvider";
 import type { MarkdownSourceEditorRef } from "./editor/MarkdownSourceEditor";
 
@@ -98,7 +106,7 @@ import { memoShareQueryKey, ShareMemoDialog } from "./dialogs/ShareMemoDialog";
 import { ShareNoteImageDialog, type ShareNoteImageSource } from "./dialogs/ShareNoteImageDialog";
 import { AiAssistantDialog, type AiAssistantAnchor } from "./dialogs/AiAssistantDialog";
 import { api } from "@/lib/api";
-import { isDesktopResourceRuntime, stageDesktopResource, toDesktopResourceUrl } from "@/lib/desktop-resources";
+import { isDesktopResourceRuntime, stageDesktopResource, toDesktopResourceDownloadUrl, toDesktopResourceUrl } from "@/lib/desktop-resources";
 import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
 import { EDITOR_CONTENT_MAX_WIDTH, EDITOR_CONTENT_MAX_WIDTH_COLLAPSED } from "@/lib/workspace-ui";
 import {
@@ -108,6 +116,7 @@ import {
   MEMO_CONTENT_STYLE,
   markdownToDoc,
   MergeDivider,
+  normalizeImageGalleries,
   PLUGIN_EMBED_NODE_TYPE,
   pluginEmbedToMarkdown,
   isPdfAttachment,
@@ -121,6 +130,7 @@ import {
   parseMemoLinkHref,
 } from "@edgeever/shared";
 import { DEFAULT_IMAGE_WIDTH_PERCENT } from "@edgeever/shared/image-display";
+import { EdgeEverLink } from "@edgeever/shared/editor-link";
 import { createEdgeEverMathematics } from "@edgeever/shared/mathematics";
 import { codeBlockLowlight, EdgeEverCodeBlock } from "@/lib/code-block";
 import { compressImageForUpload } from "@/lib/image-compression";
@@ -144,7 +154,9 @@ import {
   getEditableMemoTitle,
   getNotebookMoveOptions,
   readDesktopReadingProtectionPreference,
+  readEditorOutlineCollapsedPreference,
   writeDesktopReadingProtectionPreference,
+  writeEditorOutlineCollapsedPreference,
   type EditorContentAlignment,
   type MemoDocumentActionRequest,
   type ShortcutSettings,
@@ -152,8 +164,6 @@ import {
 import { copyEditorToWeChat, copyMarkdownToWeChat } from "@/lib/wechat-copy";
 import { ThemeBlock } from "./ThemeBlock";
 import { PortableHtmlInteractionController } from "./editor/PortableHtmlInteractionController";
-import { SystemInfoDialog } from "./SystemInfoDialog";
-import { useDeployedUpdateNotice } from "@/hooks/useDeployedUpdateNotice";
 import { downloadMarkdownFile } from "@/lib/note-markdown-export";
 import { NOTE_HTML_FULL_STYLES } from "@/lib/note-html-export-assets";
 import { downloadNoteHtmlFile, getHtmlImageEmbedNoticeKind } from "@/lib/note-html-export";
@@ -186,7 +196,7 @@ import {
   isAttachmentLinkHref,
 } from "@/lib/editor-external-link";
 import { insertAiDraftAtTextCursor } from "@/lib/ai-draft-insertion";
-import { createFileBatchQueue, processFilesSequentially } from "@/lib/file-batch";
+import { createFileBatchQueue, processFileUploadBatch } from "@/lib/file-batch";
 import { MEMO_ID_REMAPPED_EVENT, MEMO_SYNC_ACKNOWLEDGED_EVENT } from "@/lib/sync-events";
 import { useStandaloneMobileEditor } from "@/hooks/useStandaloneMobileEditor";
 import { statusSettleMotion } from "@/lib/motion";
@@ -205,6 +215,7 @@ import {
   type ImageMenuRequestDetail,
   type ImagePreviewRequestDetail,
 } from "./editor/ResizableImage";
+import { EditableImageGallery } from "./editor/ImageGallery";
 import { ImageViewer } from "./editor/ImageViewer";
 import { PdfAttachment } from "./editor/PdfAttachment";
 import { FileAttachment } from "./editor/FileAttachment";
@@ -219,7 +230,6 @@ import { EditorSaveRecoveryBanner } from "./editor/EditorSaveRecoveryBanner";
 import {
   EmptyEditorHeader,
   IconTooltip,
-  MobileNotebookSelectSheet,
   NoteLinkInteractionHint,
   ResourceActionMenu,
   type NoteLinkHintPosition,
@@ -433,11 +443,7 @@ type EditorPaneProps = {
   isLoading: boolean;
   contentSearchQuery?: string;
   imageCompressionEnabled: boolean;
-  hasNextMemo: boolean;
-  hasPreviousMemo: boolean;
   onBackToList: () => void;
-  onOpenNextMemo: () => void;
-  onOpenPreviousMemo: () => void;
   onSaved: (memo: MemoDetail) => Promise<void>;
   onDeleted: (memoId: string) => Promise<void>;
   onPermanentDeleted: (memoId: string) => Promise<void>;
@@ -460,6 +466,8 @@ type EditorPaneProps = {
   onOpenAiPrompts?: () => void;
   pluginHost: EdgeEverPluginHost;
   pluginNavigationRequest?: { id: number; noteId: string; search: string } | null;
+  onOpenExecutionCenter: () => void;
+  companionDiscoveryHub?: ReactNode;
 };
 
 type RichEditorPaneProps = EditorPaneProps & {
@@ -479,7 +487,7 @@ export const EditorPane = (props: EditorPaneProps) => {
 
   if (editingActive) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center bg-white text-sm font-medium text-slate-400">
+      <div className="flex h-full min-h-0 items-center justify-center bg-card text-sm font-medium text-slate-400">
         {t("editor.openEditor")}
       </div>
     );
@@ -507,11 +515,7 @@ const RichEditorPane = ({
   isLoading,
   contentSearchQuery = "",
   imageCompressionEnabled,
-  hasNextMemo,
-  hasPreviousMemo,
   onBackToList,
-  onOpenNextMemo,
-  onOpenPreviousMemo,
   onSaved,
   onDeleted,
   onPermanentDeleted,
@@ -534,6 +538,8 @@ const RichEditorPane = ({
   onOpenAiPrompts,
   pluginHost,
   pluginNavigationRequest,
+  onOpenExecutionCenter,
+  companionDiscoveryHub,
   onRequestMobileNativeEdit,
 }: RichEditorPaneProps) => {
   const { t, i18n } = useTranslation();
@@ -543,6 +549,7 @@ const RichEditorPane = ({
   const resourceInsertionLimit = useMemo(createFileBatchQueue, []);
   const isSelectionMode = Boolean(selectionActionBar);
   const [title, setTitle] = useState("");
+  const [systemInfoOpen, setSystemInfoOpen] = useState(false);
   const [tagsText, setTagsText] = useState("");
   const {
     dirtyVersion,
@@ -576,8 +583,6 @@ const RichEditorPane = ({
   const aiBubbleMenu = useAiBubbleMenu(aiAssistantOpen);
   const [aiSelection, setAiSelection] = useState<AiSelectionContext | null>(null);
   const [aiInsertionTarget, setAiInsertionTarget] = useState<AiInsertionTarget | null>(null);
-  const [systemInfoOpen, setSystemInfoOpen] = useState(false);
-  const { unseen: deployedUpdateUnseen } = useDeployedUpdateNotice();
   const [mobileNotebookSheetOpen, setMobileNotebookSheetOpen] = useState(false);
   const [notebookUpdatePending, setNotebookUpdatePending] = useState(false);
   const [noteSearchOpen, setNoteSearchOpen] = useState(false);
@@ -622,7 +627,7 @@ const RichEditorPane = ({
   const [markdownSource, setMarkdownSource] = useState("");
   const [isMarkdownMode, setIsMarkdownMode] = useState(false);
   const [mobileToolbarOpen, setMobileToolbarOpen] = useState(false);
-  const [editorOutlineCollapsed, setEditorOutlineCollapsed] = useState(false);
+  const [editorOutlineCollapsed, setEditorOutlineCollapsed] = useState(readEditorOutlineCollapsedPreference);
   const [wechatCopyState, setWechatCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle");
   const [memoIdCopyNotice, setMemoIdCopyNotice] = useState<{ status: "copied" | "error"; id: string } | null>(null);
   const handledSaveAndSyncTokenRef = useRef(saveAndSyncToken);
@@ -696,6 +701,19 @@ const RichEditorPane = ({
     });
   }, []);
 
+  const handleEditorOutlineCollapsedChange = useCallback((collapsed: boolean) => {
+    setEditorOutlineCollapsed(collapsed);
+    writeEditorOutlineCollapsedPreference(collapsed);
+  }, []);
+
+  const toggleEditorOutline = useCallback(() => {
+    setEditorOutlineCollapsed((collapsed) => {
+      const nextCollapsed = !collapsed;
+      writeEditorOutlineCollapsedPreference(nextCollapsed);
+      return nextCollapsed;
+    });
+  }, []);
+
   useEffect(() => {
     if (!isMobileViewport && mobileDefaultEditRequested && desktopReadingProtection) {
       setDesktopReadingProtection(false);
@@ -726,6 +744,7 @@ const RichEditorPane = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const noteSearchInputRef = useRef<HTMLInputElement | null>(null);
   const markdownSourceEditorRef = useRef<MarkdownSourceEditorRef | null>(null);
+  const markdownModeSnapshotRef = useRef<MarkdownModeSnapshot | null>(null);
   const openExternalLinkDialogRef = useRef<() => void>(() => undefined);
   const slashCommandLabelsRef = useRef<SlashCommandLabels>({
     menu: "",
@@ -824,6 +843,19 @@ const RichEditorPane = ({
   }
   const hydratingRef = useRef(false);
   const hydratedMemoIdRef = useRef<string | null>(null);
+  const editorInstanceMemoIdentityRef = useRef(
+    createEditorInstanceMemoIdentity(memo?.id ?? null),
+  );
+  editorInstanceMemoIdentityRef.current = reconcileEditorInstanceMemoIdentity(
+    editorInstanceMemoIdentityRef.current,
+    memo?.id ?? null,
+  );
+  const editorInstanceMemoKey = editorInstanceMemoIdentityRef.current.instanceKey;
+  const editorIsHydratedForCurrentMemo = isEditorInstanceHydratedForMemo(
+    editorInstanceMemoIdentityRef.current,
+    hydratedEditorMemoId,
+    memo?.id ?? null,
+  );
   /** Last content source applied to the editor — used to skip redundant setContent. */
   const appliedEditorSourceKeyRef = useRef<string | null>(null);
   const editingMemoIdRef = useRef<string | null>(memo?.id ?? null);
@@ -856,6 +888,10 @@ const RichEditorPane = ({
       if (!nextMemoId || nextMemoId === currentMemo.id) return;
 
       const previousMemoId = currentMemo.id;
+      editorInstanceMemoIdentityRef.current = remapEditorInstanceMemoIdentity(
+        editorInstanceMemoIdentityRef.current,
+        mappings,
+      );
       memoRef.current = { ...currentMemo, id: nextMemoId };
       if (editingMemoIdRef.current === previousMemoId) editingMemoIdRef.current = nextMemoId;
       if (hydratedMemoIdRef.current === previousMemoId) {
@@ -976,12 +1012,13 @@ const RichEditorPane = ({
     const targetMemoId = currentMemo.id;
     const interactionVersionAtRequest = editorCanvasInteractionVersionRef.current;
     const placeholderPosition = currentEditor.state.selection.from;
-    const imagePlaceholders = files
+    const imagePlaceholderByFile = new Map(files
       .filter((file) => SUPPORTED_PASTE_IMAGE_TYPES.has(file.type))
-      .map((file) => createImageUploadPlaceholder(
+      .map((file) => [file, createImageUploadPlaceholder(
         file,
         t("editor.uploadState.imagePreparing"),
-      ));
+      )] as const));
+    const imagePlaceholders = [...imagePlaceholderByFile.values()];
     imagePlaceholders.forEach((placeholder) => {
       addImageUploadPlaceholder(currentEditor, placeholder, placeholderPosition);
     });
@@ -1000,14 +1037,25 @@ const RichEditorPane = ({
       // Rapid consecutive pastes otherwise race with the same stale cursor.
       const insertionTarget = getResourceInsertionTarget(insertionEditor.state.selection);
       setImageUploadState("uploading");
+      const imageReadiness: Promise<void>[] = [];
 
-      const results = await processFilesSequentially(files, async (file) => {
+      const results = await processFileUploadBatch(files, async (file) => {
         const isImage = SUPPORTED_PASTE_IMAGE_TYPES.has(file.type);
         const shouldCompress = isImage && imageCompressionEnabledRef.current;
+        const placeholder = imagePlaceholderByFile.get(file);
+        if (placeholder) updateImageUploadPlaceholder(editorRef.current, placeholder,
+          t(shouldCompress ? "editor.uploadState.imageCompressing" : "editor.uploadState.uploading"));
         setImageUploadState(shouldCompress ? "compressing" : "uploading");
-        const uploadFile = shouldCompress ? (await compressImageForUpload(file)).file : file;
-
+        const preparedFile = shouldCompress ? (await compressImageForUpload(file)).file : file;
+        if (placeholder) updateImageUploadPlaceholder(editorRef.current, placeholder,
+          t("editor.uploadState.waitingToUpload"));
+        return preparedFile;
+      }, async (uploadFile, file) => {
+        const isImage = SUPPORTED_PASTE_IMAGE_TYPES.has(file.type);
+        const placeholder = imagePlaceholderByFile.get(file);
         setImageUploadState("uploading");
+        if (placeholder) updateImageUploadPlaceholder(editorRef.current, placeholder,
+          t("editor.uploadState.uploading"));
         let resource: {
           kind: "image" | "attachment";
           filename: string | null;
@@ -1030,6 +1078,9 @@ const RichEditorPane = ({
             url: `edgeever-staged://${staged.id}`,
           };
         }
+        if (resource.kind === "image") {
+          imageReadiness.push(waitForImageSourceReady(resource.url));
+        }
         return resource;
       });
 
@@ -1037,10 +1088,7 @@ const RichEditorPane = ({
       if (successfulResults.length > 0) {
         void queryClient.invalidateQueries({ queryKey: ["resources"] });
       }
-
-      await Promise.all(successfulResults.map(({ value: resource }) =>
-        resource.kind === "image" ? waitForImageSourceReady(resource.url) : Promise.resolve()
-      ));
+      await Promise.all(imageReadiness);
 
       const activeEditor = editorRef.current;
       if (memoRef.current?.id !== targetMemoId || !isEditorReady(activeEditor)) {
@@ -1106,7 +1154,11 @@ const RichEditorPane = ({
           insertion.focus();
         }
         insertion
-          .insertContentAt(safeInsertionTarget, content, { updateSelection })
+          .command(insertUploadedResources(
+            safeInsertionTarget,
+            content,
+            updateSelection,
+          ))
           .run();
         if (!updateSelection) {
           // ProseMirror can still map a cursor at the document boundary to a
@@ -1135,8 +1187,9 @@ const RichEditorPane = ({
     extensions: [
       StarterKit.configure({
         codeBlock: false,
-        link: { openOnClick: false },
+        link: false,
       }),
+      EdgeEverLink.configure({ openOnClick: false }),
       TaskList,
       TaskItem.configure({ nested: true }),
       EdgeEverCodeBlock.configure({ lowlight: codeBlockLowlight, defaultLanguage: "plaintext" }),
@@ -1147,6 +1200,7 @@ const RichEditorPane = ({
       ...createEdgeEverMathematics(),
       ...createPortableHtmlExtensions(),
       ThemeBlock,
+      EditableImageGallery,
       ResizableImage.configure({
         allowBase64: false,
         inline: false,
@@ -1166,7 +1220,7 @@ const RichEditorPane = ({
     content: memo
       ? resolveMemoContentDoc(memo.contentJson, memo.contentMarkdown)
       : { type: "doc", content: [{ type: "paragraph" }] },
-    editable: Boolean(memo && !effectiveReadOnly && hydratedEditorMemoId === memo.id),
+    editable: Boolean(memo && !effectiveReadOnly && editorIsHydratedForCurrentMemo),
     editorProps: {
       attributes: {
         class: "edgeever-note-rich-editor prose prose-slate max-w-none focus:outline-none min-h-[240px] px-4 py-3 sm:px-7 lg:min-h-[180px]",
@@ -1306,10 +1360,10 @@ const RichEditorPane = ({
       },
     },
   }, [
-    // A ProseMirror undo history belongs to exactly one memo. Reusing the same
-    // Editor instance across memo switches lets Ctrl/Cmd+Z undo the hydration
-    // transaction and restore another memo's entire document.
-    memo?.id,
+    // A ProseMirror undo history belongs to exactly one logical memo. A newly
+    // created memo keeps the same instance while its local id is remapped to a
+    // durable id; an actual memo switch still receives a fresh undo history.
+    editorInstanceMemoKey,
   ]);
 
   useEffect(() => {
@@ -1523,9 +1577,9 @@ const RichEditorPane = ({
         ...detail,
         kind: "image",
         position: {
-          left: Math.min(Math.max(rect.right - 8, 12), window.innerWidth - 12),
-          top: Math.min(Math.max(rect.bottom - 8, 12), window.innerHeight - 12),
-          placement: "inside-bottom-right",
+          left: rect.left + rect.width / 2,
+          top: rect.bottom + 8,
+          placement: "below",
         },
       });
     };
@@ -1814,8 +1868,12 @@ const RichEditorPane = ({
         contentJson: useMobilePlainTextEditor
           ? markdownToDoc(nextMobilePlainText)
           : useMarkdownSourceEditor
-            ? markdownToDoc(markdownSource)
-            : (currentEditor?.getJSON() as TiptapDoc),
+            ? resolveMarkdownModeContent(
+                markdownModeSnapshotRef.current,
+                currentMemo.id,
+                markdownSource,
+              )
+            : normalizeImageGalleries(currentEditor?.getJSON() as TiptapDoc),
         updatedAt: new Date().toISOString(),
       });
     },
@@ -2039,7 +2097,11 @@ const RichEditorPane = ({
     }
 
     if (useMarkdownSourceEditor) {
-      return markdownToDoc(markdownSource);
+      return resolveMarkdownModeContent(
+        markdownModeSnapshotRef.current,
+        memoRef.current?.id,
+        markdownSource,
+      );
     }
 
     const currentEditor = editorRef.current;
@@ -2047,7 +2109,7 @@ const RichEditorPane = ({
       return null;
     }
 
-    return currentEditor.getJSON() as TiptapDoc;
+    return normalizeImageGalleries(currentEditor.getJSON() as TiptapDoc);
   }, [getMobilePlainTextValue, markdownSource, useMarkdownSourceEditor, useMobilePlainTextEditor]);
 
   const characterCount = useMemo(() => {
@@ -2103,6 +2165,7 @@ const RichEditorPane = ({
       editSessionRef.current = null;
       hydratedMemoIdRef.current = null;
       appliedEditorSourceKeyRef.current = null;
+      markdownModeSnapshotRef.current = null;
       setHydratedEditorMemoId(null);
       editingMemoIdRef.current = null;
       setHasUnsavedChanges(false);
@@ -2126,6 +2189,7 @@ const RichEditorPane = ({
     if (!sameMemo) {
       hydratedMemoIdRef.current = null;
       appliedEditorSourceKeyRef.current = null;
+      markdownModeSnapshotRef.current = null;
       setHydratedEditorMemoId(null);
     }
 
@@ -2283,6 +2347,9 @@ const RichEditorPane = ({
       setTagsText(nextTagsText);
       setMobilePlainText(nextMarkdown);
       setMarkdownSource(nextMarkdown);
+      markdownModeSnapshotRef.current = isMarkdownMode
+        ? createMarkdownModeSnapshot(memo.id, nextContent, nextMarkdown)
+        : null;
       setMobilePlainTextElementValue(mobileTextAreaRef.current, nextMarkdown);
 
       if (isEditorReady(currentEditor) && shouldReplaceDocument) {
@@ -2354,7 +2421,15 @@ const RichEditorPane = ({
 
   useEffect(() => {
     if (isEditorReady(editor)) {
-      editor.setEditable(Boolean(memo && !effectiveReadOnly && hydratedEditorMemoId === memo.id));
+      editor.setEditable(Boolean(
+        memo
+        && !effectiveReadOnly
+        && isEditorInstanceHydratedForMemo(
+          editorInstanceMemoIdentityRef.current,
+          hydratedEditorMemoId,
+          memo.id,
+        )
+      ));
     }
   }, [editor, effectiveReadOnly, hydratedEditorMemoId, memo]);
 
@@ -2462,6 +2537,25 @@ const RichEditorPane = ({
     };
   }, []);
 
+  const applyMarkdownSourceToRichText = useCallback((scrollProgress: number) => {
+    if (!isEditorReady(editor)) {
+      return;
+    }
+
+    hydratingRef.current = true;
+    editor.commands.setContent(resolveMarkdownModeContent(
+      markdownModeSnapshotRef.current,
+      memoRef.current?.id,
+      markdownSource,
+    ));
+    markdownModeSnapshotRef.current = null;
+    setIsMarkdownMode(false);
+    restoreScrollAfterModeChange("rich", scrollProgress);
+    window.setTimeout(() => {
+      hydratingRef.current = false;
+    }, 0);
+  }, [editor, markdownSource, restoreScrollAfterModeChange]);
+
   const handleMarkdownModeChange = useCallback(() => {
     if (effectiveReadOnly || !isEditorReady(editor)) {
       return;
@@ -2472,20 +2566,23 @@ const RichEditorPane = ({
     );
 
     if (isMarkdownMode) {
-      hydratingRef.current = true;
-      editor.commands.setContent(markdownToDoc(markdownSource));
-      setIsMarkdownMode(false);
-      restoreScrollAfterModeChange("rich", scrollProgress);
-      window.setTimeout(() => {
-        hydratingRef.current = false;
-      }, 0);
+      applyMarkdownSourceToRichText(scrollProgress);
       return;
     }
 
-    setMarkdownSource(docToMarkdown(editor.getJSON() as TiptapDoc));
+    const currentMemoId = memoRef.current?.id;
+    if (!currentMemoId) {
+      return;
+    }
+    const snapshot = createMarkdownModeSnapshot(
+      currentMemoId,
+      editor.getJSON() as TiptapDoc,
+    );
+    markdownModeSnapshotRef.current = snapshot;
+    setMarkdownSource(snapshot.markdownSource);
     setIsMarkdownMode(true);
     restoreScrollAfterModeChange("markdown", scrollProgress);
-  }, [editor, effectiveReadOnly, isMarkdownMode, markdownSource, restoreScrollAfterModeChange]);
+  }, [applyMarkdownSourceToRichText, editor, effectiveReadOnly, isMarkdownMode, markdownSource, restoreScrollAfterModeChange]);
 
   const handleMarkdownSourceChange = useCallback((value: string) => {
     setMarkdownSource(value);
@@ -3039,8 +3136,8 @@ const RichEditorPane = ({
       return;
     }
 
-    setEditorOutlineCollapsed((current) => !current);
-  }, [editorShortcutBlocked, isMobileViewport, outlineToggleToken, useMarkdownSourceEditor, useMobilePlainTextEditor]);
+    toggleEditorOutline();
+  }, [editorShortcutBlocked, isMobileViewport, outlineToggleToken, toggleEditorOutline, useMarkdownSourceEditor, useMobilePlainTextEditor]);
 
   useEffect(() => {
     if (handledSaveAndSyncTokenRef.current === saveAndSyncToken || saveMutationPending) {
@@ -3130,7 +3227,7 @@ const RichEditorPane = ({
 
   const downloadResourceDirectly = useCallback((target: ResourceMenuTarget) => {
     const anchor = document.createElement("a");
-    anchor.href = target.url;
+    anchor.href = toDesktopResourceDownloadUrl(target.url, target.filename);
     anchor.download = target.filename;
     anchor.click();
   }, []);
@@ -3415,6 +3512,9 @@ const RichEditorPane = ({
       setTagsText(nextTagsText);
       setMobilePlainText(nextMarkdown);
       setMarkdownSource(nextMarkdown);
+      markdownModeSnapshotRef.current = isMarkdownMode
+        ? createMarkdownModeSnapshot(remoteMemo.id, nextContent, nextMarkdown)
+        : null;
       setMobilePlainTextElementValue(mobileTextAreaRef.current, nextMarkdown);
 
       const currentEditor = editorRef.current;
@@ -3449,11 +3549,11 @@ const RichEditorPane = ({
     } finally {
       setConflictActionPending(null);
     }
-  }, [conflictActionPending, onSaved, queryClient, repository, t]);
+  }, [conflictActionPending, isMarkdownMode, onSaved, queryClient, repository, t]);
 
   if (isSelectionMode) {
     return (
-      <div className="flex h-full min-w-0 flex-col bg-white">
+      <div className="flex h-full min-w-0 flex-col bg-card">
         {selectionActionBar}
       </div>
     );
@@ -3461,7 +3561,7 @@ const RichEditorPane = ({
 
   if (isLoading && !memo) {
     return (
-      <div className="flex h-full min-w-0 flex-col bg-white">
+      <div className="flex h-full min-w-0 flex-col bg-card">
         <EmptyEditorHeader />
         {selectionActionBar}
         <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-slate-500">{t("editor.loading")}</div>
@@ -3471,7 +3571,7 @@ const RichEditorPane = ({
 
   if (!memo) {
     return (
-      <div className="flex h-full min-w-0 flex-col bg-white">
+      <div className="flex h-full min-w-0 flex-col bg-card">
         <EmptyEditorHeader />
         {selectionActionBar}
         <div className="flex min-h-0 flex-1 items-center justify-center px-8 text-center">
@@ -3526,7 +3626,6 @@ const RichEditorPane = ({
         : saveStateClassName;
 
   const updatedLabel = formatDateTime(memo.updatedAt);
-  const currentNotebookLabel = notebookOptions.find((notebook) => notebook.id === memo.notebookId)?.name ?? t("editor.notebookFallback");
   const currentMarkdownForAi = getCurrentMarkdownForAi();
 
   const mobileDoneDisabled =
@@ -3677,7 +3776,7 @@ const RichEditorPane = ({
       };
 
   return (
-    <div className="relative flex h-full min-w-0 flex-col bg-white">
+    <div className="relative flex h-full min-w-0 flex-col bg-card">
       {selectionActionBar}
       <ExternalLinkDialog
         open={externalLinkDialogOpen}
@@ -3700,76 +3799,26 @@ const RichEditorPane = ({
           onInsert={insertMemoLink}
         />
       )}
-      <header className="shrink-0 border-b border-slate-200 bg-white">
-        <div className="flex min-h-12 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 sm:px-5">
-          <div className="flex min-w-0 items-center gap-2 text-sm">
-            <Button
-              className="lg:hidden"
-              size="icon"
-              variant="ghost"
-              title={hasUnsavedChanges && !readOnly ? t("editor.saveAndBack") : t("editor.backToList")}
-              aria-label={hasUnsavedChanges && !readOnly ? t("editor.saveAndBack") : t("editor.backToList")}
-              disabled={mobileDoneDisabled}
-              onClick={handleMobileBack}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <div className="hidden items-center gap-1 sm:flex lg:hidden">
-              <button
-                className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 disabled:opacity-30"
-                type="button"
-                title={t("editor.previousMemo")}
-                aria-label={t("editor.previousMemo")}
-                disabled={!hasPreviousMemo}
-                onClick={onOpenPreviousMemo}
+      <header className="shrink-0 border-b border-slate-200 bg-card">
+        <div className={MEMO_EDITOR_TOP_ROW_CLASS_NAME}>
+          <MemoEditorTopRowLeading
+            desktopFocusMode={desktopFocusMode}
+            updatedLabel={updatedLabel}
+            onToggleDesktopFocusMode={onToggleDesktopFocusMode}
+            mobileBackButton={(
+              <Button
+                className="lg:hidden"
+                size="icon"
+                variant="ghost"
+                title={hasUnsavedChanges && !readOnly ? t("editor.saveAndBack") : t("editor.backToList")}
+                aria-label={hasUnsavedChanges && !readOnly ? t("editor.saveAndBack") : t("editor.backToList")}
+                disabled={mobileDoneDisabled}
+                onClick={handleMobileBack}
               >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <button
-                className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 disabled:opacity-30"
-                type="button"
-                title={t("editor.nextMemo")}
-                aria-label={t("editor.nextMemo")}
-                disabled={!hasNextMemo}
-                onClick={onOpenNextMemo}
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            <div className="hidden items-center gap-1 lg:flex">
-              <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      size="icon"
-                      variant={desktopFocusMode ? "soft" : "ghost"}
-                      aria-label={t(desktopFocusMode ? "editor.exitFocusMode" : "editor.enterFocusMode")}
-                      aria-pressed={desktopFocusMode}
-                      onClick={onToggleDesktopFocusMode}
-                    >
-                      {desktopFocusMode ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {t(desktopFocusMode ? "editor.exitFocusMode" : "editor.focusMode")}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              <IconTooltip label={t("editor.previousMemo")}>
-                <Button size="icon" variant="ghost" aria-label={t("editor.previousMemo")} onClick={onOpenPreviousMemo} disabled={!hasPreviousMemo}>
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-              </IconTooltip>
-              <IconTooltip label={t("editor.nextMemo")}>
-                <Button size="icon" variant="ghost" aria-label={t("editor.nextMemo")} onClick={onOpenNextMemo} disabled={!hasNextMemo}>
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </IconTooltip>
-            </div>
-            <span className="hidden truncate text-xs text-slate-400 sm:inline">
-              {t("editor.updatedAt", { time: updatedLabel })}
-            </span>
-          </div>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            )}
+          />
 
           <div className="flex shrink-0 items-center gap-1">
             {isMemoShared && (
@@ -3886,96 +3935,57 @@ const RichEditorPane = ({
                 <Type className="h-4 w-4" />
               </Button>
             )}
-            <IconTooltip label={t("editor.searchCurrentMemo")}>
-              <Button className="hidden h-8 w-8 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-slate-300 sm:inline-flex" size="icon" variant="ghost" aria-label={t("editor.searchCurrentMemo")} onClick={() => openNoteSearch()}>
-                <Search className="h-5 w-5" strokeWidth={2.25} />
-              </Button>
-            </IconTooltip>
-            {!effectiveReadOnly && (
-              <IconTooltip label={`${t("aiAssistant.open")} (${formatShortcutBinding(shortcutSettings.openAiAssistant)})`}>
-                <Button className="hidden h-8 w-8 text-emerald-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-300 sm:inline-flex" size="icon" variant="ghost" aria-label={t("aiAssistant.open")} onClick={openAiAssistant}>
-                  <Sparkles className="h-5 w-5" strokeWidth={2.25} />
-                </Button>
-              </IconTooltip>
-            )}
-            <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    className={cn(
-                      "hidden h-8 w-8 text-slate-500 transition-all hover:bg-slate-100 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-slate-300 min-[1600px]:inline-flex",
-                      wechatCopyState === "copying" && "bg-slate-100 text-slate-700",
-                      wechatCopyState === "copied" && "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100",
-                      wechatCopyState === "error" && "bg-rose-100 text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100"
-                    )}
-                    size="icon"
-                    variant="ghost"
-                    aria-label={t("editor.copyToWeChat")}
-                    onClick={() => void handleCopyToWeChat()}
-                    disabled={!editor || useMobilePlainTextEditor || wechatCopyState === "copying"}
-                  >
-                    {wechatCopyState === "copying" ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : wechatCopyState === "copied" ? (
-                      <Check className="h-5 w-5" strokeWidth={2.75} />
-                    ) : wechatCopyState === "error" ? (
-                      <CircleAlert className="h-5 w-5" strokeWidth={2.25} />
-                    ) : (
-                      <WeChatIcon className="h-5 w-5" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  {t(wechatCopyState === "copying" ? "editor.copyingToWeChat" : wechatCopyState === "copied" ? "editor.copiedToWeChat" : wechatCopyState === "error" ? "editor.copyToWeChatFailed" : "editor.copyToWeChat")}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <IconTooltip label={t("editor.versionHistory")}>
-              <Button className="hidden h-8 w-8 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-slate-300 min-[1600px]:inline-flex" size="icon" variant="ghost" aria-label={t("editor.versionHistory")} onClick={() => setHistoryOpen(true)}>
-                <History className="h-5 w-5" strokeWidth={2.25} />
-              </Button>
-            </IconTooltip>
-            <GitHubRepositoryLink className="hidden h-8 w-8 justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70 min-[1600px]:inline-flex" iconClassName="h-5 w-5" />
-            <IconTooltip label={t("systemInfo.title")}>
-              <Button className="relative hidden h-8 w-8 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-emerald-500/70 min-[1600px]:inline-flex" size="icon" variant="ghost" aria-label={t("systemInfo.title")} onClick={() => setSystemInfoOpen(true)}>
-                <Info className="h-5 w-5" strokeWidth={2.25} />
-                {deployedUpdateUnseen ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white" /> : null}
-              </Button>
-            </IconTooltip>
-            <ThemeToggle />
-            {!effectiveReadOnly && (
-              <IconTooltip label={t("editor.save")}>
-                <Button
-                  className={cn(
-                    "hidden h-8 w-8 transition-colors sm:inline-flex",
-                    hasUnsavedChanges
-                      ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-300"
-                      : "text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus-visible:ring-2 focus-visible:ring-slate-300"
+            <MemoEditorHeaderActions
+              companionDiscoveryHub={companionDiscoveryHub}
+              moreButtonClassName={cn(!mobileEditingActive && !readOnly && "hidden sm:inline-flex")}
+              moreMenuClassName="w-44 rounded-md"
+              onOpenExecutionCenter={onOpenExecutionCenter}
+              onSearch={() => openNoteSearch()}
+              onSystemInfoOpenChange={setSystemInfoOpen}
+              textNoteActions={(
+                <>
+                  {!effectiveReadOnly && (
+                    <IconTooltip label={`${t("aiAssistant.open")} (${formatShortcutBinding(shortcutSettings.openAiAssistant)})`}>
+                      <Button className="hidden h-8 w-8 text-emerald-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-300 sm:inline-flex" size="icon" variant="ghost" aria-label={t("aiAssistant.open")} onClick={openAiAssistant}>
+                        <Sparkles className="h-5 w-5" strokeWidth={2.25} />
+                      </Button>
+                    </IconTooltip>
                   )}
-                  size="icon"
-                  variant="ghost"
-                  aria-label={t("editor.save")}
-                  onClick={() => saveMutation.mutate()}
-                  disabled={!editor || saveMutation.isPending || !hasUnsavedChanges}
-                >
-                  <Save className="h-4 w-4" />
-                </Button>
-              </IconTooltip>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  className={cn(!mobileEditingActive && !readOnly && "hidden sm:inline-flex")}
-                  size="icon"
-                  variant="ghost"
-                  title={t("editor.more")}
-                  aria-label={t("editor.moreAria")}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44 bg-white border border-slate-200 rounded-md py-1 shadow-md">
-                {!effectiveReadOnly && (
+                  <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          className={cn(
+                            "hidden h-8 w-8 text-slate-500 transition-all hover:bg-slate-100 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-slate-300 min-[1600px]:inline-flex",
+                            wechatCopyState === "copying" && "bg-slate-100 text-slate-700",
+                            wechatCopyState === "copied" && "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100",
+                            wechatCopyState === "error" && "bg-rose-100 text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100"
+                          )}
+                          size="icon"
+                          variant="ghost"
+                          aria-label={t("editor.copyToWeChat")}
+                          onClick={() => void handleCopyToWeChat()}
+                          disabled={!editor || useMobilePlainTextEditor || wechatCopyState === "copying"}
+                        >
+                          {wechatCopyState === "copying" ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : wechatCopyState === "copied" ? (
+                            <Check className="h-5 w-5" strokeWidth={2.75} />
+                          ) : wechatCopyState === "error" ? (
+                            <CircleAlert className="h-5 w-5" strokeWidth={2.25} />
+                          ) : (
+                            <WeChatIcon className="h-5 w-5" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        {t(wechatCopyState === "copying" ? "editor.copyingToWeChat" : wechatCopyState === "copied" ? "editor.copiedToWeChat" : wechatCopyState === "error" ? "editor.copyToWeChatFailed" : "editor.copyToWeChat")}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </>
+              )}
+              textNoteMenuItems={!effectiveReadOnly ? (
                   <DropdownMenuItem
                     className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-emerald-700 hover:bg-emerald-50 cursor-pointer outline-none"
                     onClick={openAiAssistant}
@@ -3983,14 +3993,9 @@ const RichEditorPane = ({
                     <Sparkles className="h-4 w-4 text-emerald-600" />
                     {t("aiAssistant.title")}
                   </DropdownMenuItem>
-                )}
-                <DropdownMenuItem
-                  className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
-                  onClick={() => openNoteSearch()}
-                >
-                  <Search className="h-4 w-4 text-slate-500" />
-                  {t("editor.searchCurrentMemo")}
-                </DropdownMenuItem>
+                ) : null}
+              moreMenuItems={(
+                <>
                 <DropdownMenuItem
                   className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
                   disabled={isLocalMemoId(memo.id)}
@@ -4096,83 +4101,64 @@ const RichEditorPane = ({
                     </DropdownMenuItem>
                   </>
                 )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </>
+              )}
+            />
           </div>
         </div>
 
-        <div className="space-y-1.5 px-4 pb-2.5 pt-2.5 sm:space-y-3 sm:px-7 sm:pb-4 sm:pt-4 lg:space-y-0 lg:pb-0.5 lg:pt-1.5">
-          <input
-            value={title}
-            readOnly={effectiveReadOnly}
-            onChange={(event) => {
-              setTitle(event.target.value);
-              persistCurrentDraft(event.target.value, tagsText, getMobilePlainTextValue());
-              markDirty();
-            }}
-            className="block w-full rounded-md border-0 bg-transparent text-xl font-bold leading-snug text-slate-950 outline-none transition placeholder:text-slate-300 focus-visible:bg-muted focus-visible:shadow-[inset_3px_0_0_var(--brand-green)] sm:text-2xl lg:text-[26px]"
-            placeholder={t("common.untitledMemo")}
-          />
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-            <button
-              className="flex h-7 min-w-0 max-w-full items-center gap-1 rounded-md border border-transparent bg-transparent px-1.5 text-xs font-medium text-slate-600 outline-none transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 focus-visible:border-emerald-300 focus-visible:ring-2 focus-visible:ring-emerald-500/20 disabled:opacity-50 sm:hidden"
-              type="button"
-              disabled={effectiveReadOnly || notebookUpdatePending}
-              title={t("editor.currentNotebook")}
-              aria-label={t("editor.currentNotebookAria", { name: currentNotebookLabel })}
-              onClick={() => setMobileNotebookSheetOpen(true)}
-            >
-              <span className="min-w-0 truncate">{currentNotebookLabel}</span>
-              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-            </button>
-            <div className="hidden min-w-[9rem] max-w-[18rem] sm:block">
-              <Select
-                value={memo.notebookId}
-                disabled={effectiveReadOnly || notebookUpdatePending}
-                onValueChange={(value) => handleNotebookChange(value)}
-              >
-                <SelectTrigger className="h-8 min-w-0 border-transparent bg-transparent px-2 text-sm font-medium text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 whitespace-nowrap">
-                  <SelectValue placeholder={t("editor.notebookPlaceholder")}>{currentNotebookLabel}</SelectValue>
-                </SelectTrigger>
-                <SelectContent className="max-h-60 bg-white border border-slate-200 rounded-md py-1 shadow-md">
-                  {notebookOptions.map((notebook) => (
-                    <SelectItem key={notebook.id} value={notebook.id}>
-                      {notebook.selectLabel}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <EditorTagPicker
-              contentMarkdown={currentMarkdownForAi}
-              disabled={effectiveReadOnly}
-              loadTags={() => repository.listTags()}
-              title={title}
-              value={tagsText}
-              onChange={(nextTagsText) => {
-                setTagsText(nextTagsText);
-                persistCurrentDraft(title, nextTagsText, getMobilePlainTextValue());
+        <div className={MEMO_EDITOR_TITLE_REGION_CLASS_NAME}>
+          <div className="min-w-0">
+            <MemoTitleInput
+              value={title}
+              readOnly={effectiveReadOnly}
+              onValueChange={(nextTitle) => {
+                setTitle(nextTitle);
+                persistCurrentDraft(nextTitle, tagsText, getMobilePlainTextValue());
                 markDirty();
               }}
+              placeholder={t("common.untitledMemo")}
             />
-            {!readOnly && (
-              <IconTooltip label={`${t(desktopReadingProtection ? "editor.disableReadingProtection" : "editor.enableReadingProtection")} (${formatShortcutBinding(shortcutSettings.toggleReadingProtection)})`}>
-                <Button
-                  className={cn(
-                    "hidden shrink-0 sm:inline-flex",
-                    desktopReadingProtection && "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-200 hover:text-slate-900"
-                  )}
-                  size="icon"
-                  variant={desktopReadingProtection ? "soft" : "ghost"}
-                  aria-label={`${t(desktopReadingProtection ? "editor.disableReadingProtection" : "editor.enableReadingProtection")} (${formatShortcutBinding(shortcutSettings.toggleReadingProtection)})`}
-                  aria-pressed={desktopReadingProtection}
-                  onClick={toggleDesktopReadingProtection}
-                >
-                  {desktopReadingProtection ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
-                </Button>
-              </IconTooltip>
-            )}
           </div>
+          <MemoEditorMetadataRow
+            contentMarkdown={currentMarkdownForAi}
+            disabled={effectiveReadOnly}
+            mobileNotebookPickerOpen={mobileNotebookSheetOpen}
+            notebookOptions={notebookOptions}
+            notebookUpdatePending={notebookUpdatePending || saveMutation.isPending}
+            repository={repository}
+            selectedNotebookId={memo.notebookId}
+            tagsText={tagsText}
+            title={title}
+            onMobileNotebookPickerOpenChange={setMobileNotebookSheetOpen}
+            onNotebookChange={handleNotebookChange}
+            onTagsChange={(nextTagsText) => {
+              setTagsText(nextTagsText);
+              persistCurrentDraft(title, nextTagsText, getMobilePlainTextValue());
+              markDirty();
+            }}
+            trailingActions={(
+              <>
+                {!readOnly && (
+                  <IconTooltip label={`${t(desktopReadingProtection ? "editor.disableReadingProtection" : "editor.enableReadingProtection")} (${formatShortcutBinding(shortcutSettings.toggleReadingProtection)})`}>
+                    <Button
+                      className={cn(
+                        "hidden shrink-0 sm:inline-flex",
+                        desktopReadingProtection && "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-200 hover:text-slate-900"
+                      )}
+                      size="icon"
+                      variant={desktopReadingProtection ? "soft" : "ghost"}
+                      aria-label={`${t(desktopReadingProtection ? "editor.disableReadingProtection" : "editor.enableReadingProtection")} (${formatShortcutBinding(shortcutSettings.toggleReadingProtection)})`}
+                      aria-pressed={desktopReadingProtection}
+                      onClick={toggleDesktopReadingProtection}
+                    >
+                      {desktopReadingProtection ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
+                    </Button>
+                  </IconTooltip>
+                )}
+              </>
+            )}
+          />
         </div>
         {noteSearchOpen ? (
           <EditorNoteSearchBar
@@ -4246,6 +4232,7 @@ const RichEditorPane = ({
                 "--editor-theme-light-heading": customEditorTheme.light.heading,
                 "--editor-theme-light-accent": customEditorTheme.light.accent,
                 "--editor-theme-light-soft": customEditorTheme.light.soft,
+                "--editor-theme-light-code-bg": customEditorTheme.light.codeBackground,
                 "--editor-theme-light-border": customEditorTheme.light.border,
                 "--editor-theme-dark-bg": customEditorTheme.dark.background,
                 "--editor-theme-dark-text": customEditorTheme.dark.text,
@@ -4253,12 +4240,13 @@ const RichEditorPane = ({
                 "--editor-theme-dark-heading": customEditorTheme.dark.heading,
                 "--editor-theme-dark-accent": customEditorTheme.dark.accent,
                 "--editor-theme-dark-soft": customEditorTheme.dark.soft,
+                "--editor-theme-dark-code-bg": customEditorTheme.dark.codeBackground,
                 "--editor-theme-dark-border": customEditorTheme.dark.border,
               }
             : {}),
         } as CSSProperties}
         className={cn(
-          "edgeever-editor relative min-h-0 flex-1 bg-white",
+          "edgeever-editor relative min-h-0 flex-1 bg-card",
           useMobilePlainTextEditor
             ? "overflow-visible"
             : useMarkdownSourceEditor
@@ -4332,7 +4320,7 @@ const RichEditorPane = ({
                   spellCheck
                   data-edgeever-mobile-editor="plain-textarea"
                   aria-label={t("editor.noteBodyAria")}
-                  className="block min-h-[60dvh] w-full resize-none border border-slate-200 bg-white px-4 py-3 pr-32 text-base leading-7 text-slate-950 outline-none placeholder:text-slate-400 sm:px-7"
+                  className="block min-h-[60dvh] w-full resize-none border border-slate-200 bg-card px-4 py-3 pr-32 text-base leading-7 text-slate-950 outline-none placeholder:text-slate-400 sm:px-7"
                   placeholder={t("editor.placeholder")}
                   style={{ WebkitUserSelect: "text", userSelect: "text", caretColor: "auto" }}
                 />
@@ -4345,7 +4333,7 @@ const RichEditorPane = ({
                       {t("editor.paste")}
                   </button>
                   <button
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm"
+                    className="rounded-full border border-slate-200 bg-card px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm"
                     type="button"
                     onClick={handleMobilePromptInput}
                   >
@@ -4407,7 +4395,7 @@ const RichEditorPane = ({
               scrollContainer={editorScrollContainer}
               collapsed={editorOutlineCollapsed}
               shortcutLabel={formatShortcutBinding(shortcutSettings.toggleOutline)}
-              onCollapsedChange={setEditorOutlineCollapsed}
+              onCollapsedChange={handleEditorOutlineCollapsedChange}
             />
           )}
         </div>
@@ -4516,8 +4504,6 @@ const RichEditorPane = ({
         />
       )}
 
-      <SystemInfoDialog open={systemInfoOpen} onOpenChange={setSystemInfoOpen} />
-
       <AiAssistantDialog
         open={aiAssistantOpen}
         anchor={aiAssistantAnchor}
@@ -4539,15 +4525,6 @@ const RichEditorPane = ({
         />
       )}
 
-      {mobileNotebookSheetOpen && (
-        <MobileNotebookSelectSheet
-          isUpdating={notebookUpdatePending || saveMutation.isPending}
-          options={notebookOptions}
-          selectedNotebookId={memo.notebookId}
-          onClose={() => setMobileNotebookSheetOpen(false)}
-          onSelect={handleNotebookChange}
-        />
-      )}
     </div>
   );
 };

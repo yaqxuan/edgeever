@@ -238,8 +238,6 @@ jobs:
       - name: Set up Bun
         if: steps.upstream.outputs.align_mode == 'merge'
         uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - name: Verify customized merge
         if: steps.upstream.outputs.align_mode == 'merge'
@@ -247,9 +245,7 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile
           bun run db:migrate:local
-          # This Fork intentionally preserves .github/workflows/**. Exclude only
-          # upstream release-contract tests that assert the upstream-owned copies.
-          bun test --path-ignore-patterns='tests/e2e/**|scripts/(desktop-build-workflow|docker-release).test.mjs'
+          bun run test
           bun run typecheck
           bun run build
 

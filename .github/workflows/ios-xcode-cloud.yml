@@ -26,7 +26,7 @@ on:
         description: App Store marketing version to inspect
         required: false
         type: string
-        default: "1.42.1"
+        default: "1.65.0"
       app_store_build_id:
         description: App Store Connect build resource ID to inspect
         required: false
@@ -78,30 +78,55 @@ jobs:
           store_version = os.environ.get("APP_STORE_VERSION", "").strip()
           store_build_id = os.environ.get("APP_STORE_BUILD_ID", "").strip()
 
-          now = int(time.time())
-          token = jwt.encode(
-              {"iss": issuer, "iat": now, "exp": now + 20 * 60, "aud": "appstoreconnect-v1"},
-              private_key,
-              algorithm="ES256",
-              headers={"kid": key_id, "typ": "JWT"},
-          )
+          token = None
+          token_exp = 0
 
-          def api(method, path, body=None):
-              request = urllib.request.Request(
-                  "https://api.appstoreconnect.apple.com" + path,
-                  data=None if body is None else json.dumps(body).encode(),
-                  method=method,
+          def ensure_token():
+              global token, token_exp
+              now = int(time.time())
+              if token and now < token_exp - 60:
+                  return token
+              token_exp = now + 20 * 60
+              encoded = jwt.encode(
+                  {"iss": issuer, "iat": now, "exp": token_exp, "aud": "appstoreconnect-v1"},
+                  private_key,
+                  algorithm="ES256",
+                  headers={"kid": key_id, "typ": "JWT"},
               )
-              request.add_header("Authorization", f"Bearer {token}")
-              if body is not None:
-                  request.add_header("Content-Type", "application/json")
-              try:
-                  with urllib.request.urlopen(request) as response:
-                      payload = response.read().decode()
-                      return json.loads(payload) if payload else {}
-              except urllib.error.HTTPError as error:
-                  details = error.read().decode()
-                  raise SystemExit(f"App Store Connect API {method} {path} failed ({error.code}): {details}")
+              token = encoded.decode() if isinstance(encoded, bytes) else encoded
+              return token
+
+          def invalidate_token():
+              global token, token_exp
+              token = None
+              token_exp = 0
+
+          def api(method, path, body=None, attempts=5):
+              last_error = None
+              for attempt in range(1, attempts + 1):
+                  request = urllib.request.Request(
+                      "https://api.appstoreconnect.apple.com" + path,
+                      data=None if body is None else json.dumps(body).encode(),
+                      method=method,
+                  )
+                  request.add_header("Authorization", f"Bearer {ensure_token()}")
+                  if body is not None:
+                      request.add_header("Content-Type", "application/json")
+                  try:
+                      with urllib.request.urlopen(request) as response:
+                          payload = response.read().decode()
+                          return json.loads(payload) if payload else {}
+                  except urllib.error.HTTPError as error:
+                      details = error.read().decode()
+                      last_error = f"App Store Connect API {method} {path} failed ({error.code}): {details}"
+                      if error.code in (401, 429, 500, 502, 503, 504) and attempt < attempts:
+                          if error.code == 401:
+                              invalidate_token()
+                          print(f"{last_error} retrying {attempt}/{attempts - 1}", flush=True)
+                          time.sleep(min(30, 2 ** attempt))
+                          continue
+                      raise SystemExit(last_error)
+              raise SystemExit(last_error or f"App Store Connect API {method} {path} failed")
 
           if mode == "monitor":
               if not build_run_id:
@@ -131,6 +156,48 @@ jobs:
                               f"completion={action_attributes.get('completionStatus')} "
                               f"issues={action_attributes.get('issueCounts')}"
                           )
+                          issues = api(
+                              "GET",
+                              f"/v1/ciBuildActions/{action['id']}/issues?limit=200&"
+                              "fields%5BciIssues%5D=issueType,message,fileSource,category",
+                          )
+                          for issue in issues.get("data", []):
+                              issue_attributes = issue.get("attributes") or {}
+                              source = issue_attributes.get("fileSource") or {}
+                              location = source.get("path") or ""
+                              if source.get("lineNumber"):
+                                  location += f":{source['lineNumber']}"
+                              print(
+                                  f"  - issue={issue_attributes.get('issueType')} "
+                                  f"category={issue_attributes.get('category')} "
+                                  f"location={location} "
+                                  f"message={issue_attributes.get('message')}"
+                              )
+                          artifacts = api(
+                              "GET",
+                              f"/v1/ciBuildActions/{action['id']}/artifacts?limit=200&"
+                              "fields%5BciArtifacts%5D=fileType,fileName,fileSize,downloadUrl",
+                          )
+                          for artifact in artifacts.get("data", []):
+                              artifact_attributes = artifact.get("attributes") or {}
+                              file_type = artifact_attributes.get("fileType")
+                              file_name = artifact_attributes.get("fileName") or artifact["id"]
+                              print(
+                                  f"  - artifact={file_type} name={file_name} "
+                                  f"size={artifact_attributes.get('fileSize')}"
+                              )
+                              if file_type == "LOG_BUNDLE" and artifact_attributes.get("downloadUrl"):
+                                  output_directory = os.path.join(
+                                      os.environ["RUNNER_TEMP"], "xcode-cloud-logs"
+                                  )
+                                  os.makedirs(output_directory, exist_ok=True)
+                                  output_path = os.path.join(
+                                      output_directory, os.path.basename(file_name)
+                                  )
+                                  urllib.request.urlretrieve(
+                                      artifact_attributes["downloadUrl"], output_path
+                                  )
+                                  print(f"  - downloaded log bundle to {output_path}")
                       builds = api(
                           "GET",
                           f"/v1/ciBuildRuns/{build_run_id}/builds?limit=50&"
@@ -263,6 +330,15 @@ jobs:
           )
           PY
 
+      - name: Upload failed Xcode Cloud logs
+        if: failure() && inputs.mode == 'monitor'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-cloud-logs-${{ inputs.build_run_id }}
+          path: ${{ runner.temp }}/xcode-cloud-logs
+          if-no-files-found: warn
+          retention-days: 7
+
   submit-review:
     if: github.repository == 'tianma-if/edgeever' && inputs.mode == 'submit-review'
     runs-on: ubuntu-latest
@@ -281,16 +357,18 @@ jobs:
 
       - name: Submit App Store build for review
         env:
-          APP_STORE_BUILD_NUMBER: "40"
+          APP_STORE_BUILD_NUMBER: "46"
           APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.EDGEEVER_APPLE_API_ISSUER }}
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.EDGEEVER_APPLE_API_KEY_ID }}
           APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.EDGEEVER_APPLE_API_KEY_BASE64 }}
           APP_STORE_RELEASE_NOTES_ZH: |-
-            改进笔记正文布局，提升任务列表、引用、表格和代码块的阅读体验。
-            优化行内代码配色，在浅色与深色模式下都更加清晰。
+            可从可见标签筛选笔记，列表按精确标签匹配，相近名称的标签不再混入结果。
+            打开大型思维导图时不再缩成无法阅读的全图，画布铺满剩余视口，支持捏合缩放并点选主题。
+            在原生客户端中更一致地呈现可视化笔记，图表阅读与布局更清晰。
           APP_STORE_RELEASE_NOTES_EN: |-
-            Refine note layouts for clearer task lists, quotes, tables, and code blocks.
-            Improve inline-code colors for better clarity in both light and dark modes.
+            Filter notes from a visible tag. Lists match the exact tag, so similarly named tags no longer leak into the result.
+            Large mind maps open at a readable size, fill the remaining viewport, pinch-zoom, and focus a topic on tap.
+            Render visual notes more consistently in the native viewer, with clearer diagram reading and layout.
           APP_STORE_VERSION: ${{ inputs.app_store_version }}
         run: fastlane ios submit_review
         working-directory: apps/ios

@@ -9,15 +9,18 @@ import { WORKSPACE_PAGE_TITLE_CLASSNAME } from "@/lib/workspace-ui";
 import type { TagSummary } from "@edgeever/shared";
 import { AppConfirmDialog } from "./dialogs/ConfirmDialogs";
 import type { EdgeEverRepository } from "@/lib/repository";
+import { ExecutionCenterButton } from "@/components/execution/ExecutionCenterButton";
 
 export const TagsPane = ({
   onClose,
   onSelectTag,
   repository,
+  onOpenExecutionCenter,
 }: {
   onClose: () => void;
   onSelectTag: (tag: string) => void;
   repository: EdgeEverRepository;
+  onOpenExecutionCenter: () => void;
 }) => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -48,8 +51,8 @@ export const TagsPane = ({
   };
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col bg-white">
-      <header className="flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-end border-b border-slate-200 px-6 pb-3 pt-[env(safe-area-inset-top)] lg:h-16 lg:items-center lg:pb-0 lg:pt-0">
+    <div className="flex h-full min-h-0 min-w-0 flex-col bg-card">
+      <header className="flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-end justify-between border-b border-slate-200 px-6 pb-3 pt-[env(safe-area-inset-top)] lg:h-16 lg:items-center lg:pb-0 lg:pt-0">
         <div className="flex min-w-0 items-center gap-3">
           <Button size="icon" variant="ghost" title={t("common.back")} aria-label={t("common.back")} onClick={onClose} className="h-9 w-9 rounded-lg hover:bg-slate-100">
             <ChevronLeft className="h-5 w-5 text-slate-500" />
@@ -59,6 +62,7 @@ export const TagsPane = ({
             <p className="mt-0.5 text-xs text-slate-500">{t("tagsDialog.count", { count: tags.length })}</p>
           </div>
         </div>
+        <ExecutionCenterButton onClick={onOpenExecutionCenter} />
       </header>
 
       <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6 lg:py-6">
@@ -73,7 +77,7 @@ export const TagsPane = ({
                 const isEditing = editingTagName === tag.name;
                 const nextName = editingTagValue.trim();
                 return (
-                  <div key={tag.name} className={cn("flex min-h-12 items-center gap-3 rounded-md border border-slate-200 bg-white px-3 py-2", isEditing && "border-emerald-200 bg-emerald-50/30")}>
+                  <div key={tag.name} className={cn("flex min-h-12 items-center gap-3 rounded-md border border-slate-200 bg-card px-3 py-2", isEditing && "border-emerald-200 bg-emerald-50/30")}>
                     {isEditing ? (
                       <div className="min-w-0 flex-1">
                         <form className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center" onSubmit={(event) => { event.preventDefault(); if (nextName && nextName !== tag.name && !renameMutation.isPending) renameMutation.mutate({ tag: tag.name, name: nextName }); }}>

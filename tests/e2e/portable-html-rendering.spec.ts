@@ -148,10 +148,10 @@ test("renders portable safe HTML in desktop and mobile web", async ({ page }) =>
     await page.keyboard.type(" EDIT-CHECK");
     await expect(firstParagraph).toContainText("EDIT-CHECK");
     await expect(detailsContent).toBeHidden();
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await expect(firstParagraph).not.toContainText("EDIT-CHECK");
     await expect(detailsContent).toBeHidden();
-    await page.keyboard.press("Control+Shift+z");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
     await expect(firstParagraph).toContainText("EDIT-CHECK");
     await expect(detailsContent).toBeHidden();
     // The web editor is offline-first. Confirm that its automatic save has

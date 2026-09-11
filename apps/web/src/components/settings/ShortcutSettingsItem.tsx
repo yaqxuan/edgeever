@@ -19,6 +19,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import {
+  SETTINGS_ITEM_DESCRIPTION_CLASSNAME,
+  SETTINGS_ITEM_ICON_CLASSNAME,
+  SETTINGS_ITEM_TITLE_CLASSNAME,
+} from "./settings-ui";
 
 interface ShortcutSettingsItemProps {
   shortcutSettings: ShortcutSettings;
@@ -104,17 +109,17 @@ export const ShortcutSettingsItem = ({ shortcutSettings, onShortcutSettingsChang
   return (
     <>
       <div className="flex min-h-16 flex-col items-start gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <Keyboard className="h-4 w-4 text-emerald-700" />
-            {t("shortcuts.title")}
+        <div className="flex min-w-0 items-start gap-3">
+          <Keyboard className={SETTINGS_ITEM_ICON_CLASSNAME} />
+          <div className="min-w-0">
+            <div className={SETTINGS_ITEM_TITLE_CLASSNAME}>{t("shortcuts.title")}</div>
+            <div className={cn(SETTINGS_ITEM_DESCRIPTION_CLASSNAME, "truncate")}>{shortcutSummary}</div>
           </div>
-          <div className="mt-0.5 truncate text-xs leading-4 text-slate-500">{shortcutSummary}</div>
         </div>
         <Button
           size="sm"
           variant="outline"
-          className="h-8 w-full bg-white px-3 text-xs sm:w-auto"
+          className="h-8 w-full bg-card px-3 text-xs sm:w-auto"
           type="button"
           onClick={() => setShortcutsOpen(true)}
         >
@@ -142,14 +147,14 @@ export const ShortcutSettingsItem = ({ shortcutSettings, onShortcutSettingsChang
                   className="flex min-w-0 flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900">{item.label}</div>
-                    <div className="mt-0.5 text-xs leading-4 text-slate-500">{item.description}</div>
+                    <div className={SETTINGS_ITEM_TITLE_CLASSNAME}>{item.label}</div>
+                    <div className={SETTINGS_ITEM_DESCRIPTION_CLASSNAME}>{item.description}</div>
                   </div>
                   <Button
                     ref={recording ? captureButtonRef : null}
                     type="button"
                     variant={recording ? "solid" : "outline"}
-                    className={cn("h-9 min-w-32 px-3 font-mono text-xs", !recording && "bg-white")}
+                    className={cn("h-9 min-w-32 px-3 font-mono text-xs", !recording && "bg-card")}
                     onClick={() => {
                       setRecordingAction(item.value);
                       setCaptureMessage("");

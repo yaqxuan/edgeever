@@ -1,4 +1,5 @@
 import {
+  PLUGIN_API_VERSION,
   parseExtensionManifest,
   type MarketplaceEntry,
   type EdgeEverPlugin,
@@ -16,11 +17,15 @@ import {
   type PluginNoteSummary,
   type PluginPanel,
   type PluginOpenNoteOptions,
+  type PluginPanelChrome,
   type PluginPanelCloseDecision,
   type PluginPanelOpenOptions,
+  normalizePluginPanelChrome,
   type PluginPermission,
   type PluginApiErrorCode,
   type PluginResource,
+  type PluginSchedule,
+  type PluginScheduleInput,
   type PluginSettingField,
   type PluginSettingValue,
   type PluginEditorSelection,
@@ -33,14 +38,13 @@ import { markdownToDoc } from "@edgeever/shared";
 import type { EdgeEverRepository } from "@/lib/repository";
 import { WebPluginSecretStore, type PluginSecretStorage } from "@/lib/plugins/plugin-secret-store";
 import { WebPluginPackageStore, type CachedPluginPackage, type PluginPackageStorage } from "@/lib/plugins/plugin-package-store";
-import { downloadGithubExtension, extensionManifestsEqual, parseGithubRepositoryUrl, sha256Hex } from "@/lib/plugins/github-plugin-distribution";
+import { downloadGithubExtension, downloadPinnedGithubExtension, extensionManifestsEqual, parseGithubRepositoryUrl, sha256Hex } from "@/lib/plugins/github-plugin-distribution";
 import { subscribeRepositoryMutations, type RepositoryMutationEvent } from "@/lib/repository-events";
 
 const INSTALLED_EXTENSIONS_STORAGE_KEY = "edgeever.extensions.installed.v1";
 const ACTIVE_THEME_STORAGE_KEY = "edgeever.extensions.active-theme.v1";
 const STORAGE_PREFIX = "edgeever.plugin-data.v1";
 const SETTINGS_STORAGE_PREFIX = "edgeever.plugin-settings.v1";
-const RECENT_ACTIONS_STORAGE_PREFIX = "edgeever.extensions.recent-actions.v1";
 
 const readStorageItem = (key: string) => {
   try {
@@ -120,12 +124,15 @@ export interface RegisteredPluginCommand {
   pluginId: string;
   id: string;
   title: string;
+  listed?: boolean;
+  menu?: boolean;
 }
 
 export interface RegisteredPluginPanel {
   pluginId: string;
   id: string;
   title: string;
+  purpose?: "workflow" | "dashboard" | "preview" | "onboarding";
   presentation: "dialog" | "fullscreen";
 }
 
@@ -154,8 +161,18 @@ export interface PluginNavigationAdapter {
   openNote(noteId: string, notebookId: string, options?: PluginOpenNoteOptions): void | Promise<void>;
 }
 
+export interface PluginPanelChromeAdapter {
+  set(chrome: PluginPanelChrome): void;
+}
+
 export interface PluginPanelAdapter {
   openPanel(pluginId: string, panelId: string, options?: PluginPanelOpenOptions): void | Promise<void>;
+}
+
+export interface PluginScheduleAdapter {
+  upsert(pluginId: string, input: PluginScheduleInput): Promise<PluginSchedule>;
+  list(pluginId: string): Promise<PluginSchedule[]>;
+  remove(pluginId: string, key: string): Promise<void>;
 }
 
 export interface PluginHostSnapshot {
@@ -163,17 +180,21 @@ export interface PluginHostSnapshot {
   commands: RegisteredPluginCommand[];
   panels: RegisteredPluginPanel[];
   embeds: RegisteredPluginEmbed[];
-  recentActions: RegisteredPluginAction[];
   activeThemeId: string | null;
 }
 
 interface PluginHostOptions {
   repository: EdgeEverRepository;
   scope: string;
+  aiAdapter?: PluginContext['ai'];
+  publicNetworkAdapter?: {
+    fetchPublic(input: { url: string; method: 'GET' | 'HEAD'; headers: Record<string, string> }, options?: { signal?: AbortSignal }): Promise<{ status: number; statusText: string; url: string; headers: Record<string, string>; body: ArrayBuffer }>;
+  };
   onWorkspaceChanged?: () => void | Promise<void>;
   onNotice?: (message: string) => void;
   secretStorage?: PluginSecretStorage;
   packageStorage?: PluginPackageStorage;
+  scheduleAdapter?: PluginScheduleAdapter;
 }
 
 interface ActivePlugin {
@@ -322,9 +343,10 @@ const readInstalledExtensions = (): InstalledExtension[] => {
 };
 
 const assertPermission = (manifest: PluginManifest, permission: PluginPermission) => {
-  if (!manifest.permissions.includes(permission)) {
-    throw new Error(`${manifest.name} has not declared the ${permission} permission.`);
-  }
+  // Enabled plugins are trusted code. Capability declarations are descriptive metadata,
+  // retained for compatibility and user review rather than runtime authorization.
+  void manifest;
+  void permission;
 };
 
 const EVENT_PERMISSIONS: Partial<Record<keyof PluginEventMap, PluginPermission>> = {
@@ -339,16 +361,6 @@ const EVENT_PERMISSIONS: Partial<Record<keyof PluginEventMap, PluginPermission>>
   "resource.updated": "resources:read",
   "resource.deleted": "resources:read",
 };
-
-const isAllowedNetworkHost = (hostname: string, allowedHosts: string[]) =>
-  allowedHosts.some((allowedHost) => {
-    const normalized = allowedHost.trim().toLocaleLowerCase();
-    if (normalized.startsWith("*.")) {
-      const suffix = normalized.slice(1);
-      return hostname.endsWith(suffix) && hostname !== suffix.slice(1);
-    }
-    return hostname === normalized;
-  });
 
 const resolveManifestEntry = (manifestUrl: string, entry: string) => new URL(entry, manifestUrl).href;
 
@@ -401,12 +413,15 @@ const normalizePanelState = (state: PluginPanelOpenOptions["state"] | undefined)
 };
 
 export class EdgeEverPluginHost {
+  private readonly aiAdapter?: PluginHostOptions['aiAdapter'];
+  private readonly publicNetworkAdapter?: PluginHostOptions['publicNetworkAdapter'];
   private readonly repository: EdgeEverRepository;
   private readonly scope: string;
   private readonly onWorkspaceChanged?: () => void | Promise<void>;
   private readonly onNotice?: (message: string) => void;
   private readonly secretStorage: PluginSecretStorage;
   private readonly packageStorage: PluginPackageStorage;
+  private readonly scheduleAdapter?: PluginScheduleAdapter;
   private readonly listeners = new Set<() => void>();
   private readonly activePlugins = new Map<string, ActivePlugin>();
   private readonly commands = new Map<string, PluginCommand & { pluginId: string }>();
@@ -414,26 +429,35 @@ export class EdgeEverPluginHost {
   private readonly mountedPanels = new Map<string, Set<() => void>>();
   private readonly embeds = new Map<string, PluginEmbedRenderer & { pluginId: string }>();
   private readonly mountedEmbeds = new Map<string, Set<() => void>>();
-  private readonly eventListeners = new Map<keyof PluginEventMap, Set<(payload: never) => void>>();
+  private readonly eventListeners = new Map<keyof PluginEventMap, Set<{ pluginId: string; listener: (payload: never) => void }>>();
   private extensions = readInstalledExtensions();
   private activeThemeId = readStorageItem(ACTIVE_THEME_STORAGE_KEY);
-  private snapshot: PluginHostSnapshot = { extensions: [], commands: [], panels: [], embeds: [], recentActions: [], activeThemeId: null };
-  private recentActions: RegisteredPluginAction[];
+  private snapshot: PluginHostSnapshot = { extensions: [], commands: [], panels: [], embeds: [], activeThemeId: null };
   private editorAdapter: PluginEditorAdapter | null = null;
   private navigationAdapter: PluginNavigationAdapter | null = null;
   private panelAdapter: PluginPanelAdapter | null = null;
   private themeObserver: MutationObserver | null = null;
   private repositoryEventDisposer: (() => void) | null = null;
   private started = false;
+  private lifecycleQueue: Promise<void> = Promise.resolve();
+  private readonly activatingPlugins = new Map<string, Promise<void>>();
+
+  private enqueueLifecycle(action: () => Promise<void>) {
+    const pending = this.lifecycleQueue.then(action, action);
+    this.lifecycleQueue = pending.catch(() => undefined);
+    return pending;
+  }
 
   constructor(options: PluginHostOptions) {
+    this.aiAdapter = options.aiAdapter;
+    this.publicNetworkAdapter = options.publicNetworkAdapter;
     this.repository = options.repository;
     this.scope = options.scope;
     this.onWorkspaceChanged = options.onWorkspaceChanged;
     this.onNotice = options.onNotice;
     this.secretStorage = options.secretStorage ?? new WebPluginSecretStore();
     this.packageStorage = options.packageStorage ?? new WebPluginPackageStore();
-    this.recentActions = this.readRecentActions();
+    this.scheduleAdapter = options.scheduleAdapter;
     this.refreshSnapshot();
   }
 
@@ -465,13 +489,15 @@ export class EdgeEverPluginHost {
     };
   }
 
-  async activateEnabled() {
+  activateEnabled() {
+    return this.enqueueLifecycle(async () => {
     this.start();
     for (const extension of this.extensions) {
       if (!extension.enabled || extension.manifest.type !== "plugin") continue;
       await this.activatePlugin(extension.manifest.id).catch(() => undefined);
     }
     this.applyActiveTheme();
+    });
   }
 
   async installFromSource(input: string) {
@@ -480,7 +506,12 @@ export class EdgeEverPluginHost {
   }
 
   async installFromGithubRepository(input: string, marketplaceEntry?: MarketplaceEntry, confirmedManifest?: ExtensionManifest) {
-    const downloaded = await downloadGithubExtension(input);
+    // Official marketplace entries carry the live GitHub version after marketplace resolution.
+    const downloaded = marketplaceEntry
+      ? await downloadPinnedGithubExtension(input, marketplaceEntry.verification.version, {
+        requireStyles: Boolean(marketplaceEntry.verification.checksums?.stylesCss),
+      })
+      : await downloadGithubExtension(input);
     assertConfirmedManifest(confirmedManifest, downloaded.manifest);
     if (marketplaceEntry) this.assertMarketplaceDownload(marketplaceEntry, downloaded.manifest, downloaded.checksums);
     return this.replaceInstalledExtension(downloaded.manifest, downloaded.manifestUrl, {
@@ -626,8 +657,6 @@ export class EdgeEverPluginHost {
     const extension = this.requireExtension(extensionId);
     if (extension.manifest.type === "plugin") await this.deactivatePlugin(extensionId);
     this.extensions = this.extensions.filter((item) => item.manifest.id !== extensionId);
-    this.recentActions = this.recentActions.filter((action) => action.pluginId !== extensionId);
-    this.persistRecentActions();
     if (this.activeThemeId === extensionId) {
       this.activeThemeId = null;
       removeStorageItem(ACTIVE_THEME_STORAGE_KEY);
@@ -670,9 +699,11 @@ export class EdgeEverPluginHost {
     const normalized = validateSettingValue(field, value);
     if (field.type === "secret") {
       await this.secretStorage.set(`${this.scope}:${extensionId}`, `setting:${key}`, String(normalized));
+      this.emit("settings.changed", { key }, extensionId);
       return;
     }
     writeStorageItem(`${SETTINGS_STORAGE_PREFIX}:${this.scope}:${extensionId}:${key}`, JSON.stringify(normalized));
+    this.emit("settings.changed", { key }, extensionId);
   }
 
   async removeSettingValue(extensionId: string, key: string) {
@@ -681,16 +712,17 @@ export class EdgeEverPluginHost {
     const field = requireSettingField(extension.manifest, key);
     if (field.type === "secret") {
       await this.secretStorage.remove(`${this.scope}:${extensionId}`, `setting:${key}`);
+      this.emit("settings.changed", { key }, extensionId);
       return;
     }
     removeStorageItem(`${SETTINGS_STORAGE_PREFIX}:${this.scope}:${extensionId}:${key}`);
+    this.emit("settings.changed", { key }, extensionId);
   }
 
   async runCommand(pluginId: string, commandId: string) {
     const command = this.commands.get(`${pluginId}:${commandId}`);
     if (!command) throw new Error("Plugin command is not registered.");
     await command.run();
-    this.recordRecentAction({ pluginId, id: commandId, title: command.title, type: "command" });
   }
 
   async mountPanel(
@@ -699,6 +731,7 @@ export class EdgeEverPluginHost {
     container: HTMLElement,
     options?: PluginPanelOpenOptions,
     onRequestClose?: () => void | Promise<void>,
+    chromeAdapter?: PluginPanelChromeAdapter,
   ) {
     const key = `${pluginId}:${panelId}`;
     const panel = this.panels.get(key);
@@ -709,6 +742,11 @@ export class EdgeEverPluginHost {
       state: normalizePanelState(options?.state),
       requestClose: async () => {
         await onRequestClose?.();
+      },
+      shell: {
+        set(chrome) {
+          chromeAdapter?.set(normalizePluginPanelChrome(chrome));
+        },
       },
     });
     if (this.panels.get(key) !== panel) {
@@ -724,7 +762,6 @@ export class EdgeEverPluginHost {
       if (typeof pluginDispose === "function") pluginDispose();
     };
     mounted.add(dispose);
-    this.recordRecentAction({ pluginId, id: panelId, title: panel.title, type: "panel" });
     return dispose;
   }
 
@@ -757,14 +794,16 @@ export class EdgeEverPluginHost {
     return dispose;
   }
 
-  async dispose() {
+  dispose() {
+    return this.enqueueLifecycle(async () => {
     this.started = false;
     window.removeEventListener("edgeever:sync-queue-changed", this.handleSyncQueueChanged);
     this.themeObserver?.disconnect();
     this.themeObserver = null;
     this.repositoryEventDisposer?.();
     this.repositoryEventDisposer = null;
-    for (const pluginId of [...this.activePlugins.keys()]) await this.deactivatePlugin(pluginId);
+    for (const pluginId of new Set([...this.activePlugins.keys(), ...this.activatingPlugins.keys()])) await this.deactivatePlugin(pluginId);
+    });
   }
 
   private start() {
@@ -805,7 +844,15 @@ export class EdgeEverPluginHost {
     return extension;
   }
 
-  private async activatePlugin(pluginId: string) {
+  private activatePlugin(pluginId: string) {
+    const current = this.activatingPlugins.get(pluginId);
+    if (current) return current;
+    const pending = this.activatePluginOnce(pluginId).finally(() => { this.activatingPlugins.delete(pluginId); });
+    this.activatingPlugins.set(pluginId, pending);
+    return pending;
+  }
+
+  private async activatePluginOnce(pluginId: string) {
     if (this.activePlugins.has(pluginId)) return;
     const extension = this.requireExtension(pluginId);
     if (extension.manifest.type !== "plugin") return;
@@ -859,6 +906,7 @@ export class EdgeEverPluginHost {
   }
 
   private async deactivatePlugin(pluginId: string) {
+    await this.activatingPlugins.get(pluginId)?.catch(() => undefined);
     const active = this.activePlugins.get(pluginId);
     if (!active) return;
     this.activePlugins.delete(pluginId);
@@ -893,8 +941,23 @@ export class EdgeEverPluginHost {
   private createContext(manifest: PluginManifest, disposers: Array<() => void>): PluginContext {
     const storagePrefix = `${STORAGE_PREFIX}:${this.scope}:${manifest.id}:`;
     const secretNamespace = `${this.scope}:${manifest.id}`;
+    const lifetime = new AbortController();
+    disposers.push(() => lifetime.abort());
     return {
       pluginId: manifest.id,
+      ai: {
+        status: async () => {
+          assertPermission(manifest, 'ai:generate'); lifetime.signal.throwIfAborted();
+          if (!this.aiAdapter) return { configured: false };
+          const result = await this.aiAdapter.status(); lifetime.signal.throwIfAborted(); return result;
+        },
+        generate: async input => {
+          assertPermission(manifest, 'ai:generate'); lifetime.signal.throwIfAborted();
+          if (!this.aiAdapter) throw new Error('AI generation is unavailable in this host.');
+          const signal = AbortSignal.any([lifetime.signal, ...(input.signal ? [input.signal] : [])]);
+          const result = await this.aiAdapter.generate({ ...input, signal }); signal.throwIfAborted(); return result;
+        },
+      },
       notes: {
         query: async (input = {}) => {
           assertPermission(manifest, "notes:read");
@@ -1128,14 +1191,41 @@ export class EdgeEverPluginHost {
           return dispose;
         },
       },
+      schedules: {
+        upsert: async (input) => {
+          assertPermission(manifest, "schedules");
+          if (!this.scheduleAdapter) throw new Error("Plugin schedules are only available in the EdgeEver desktop app.");
+          if (!/^[a-z0-9][a-z0-9._-]*$/i.test(input.key) || input.key.length > 120) {
+            throw new Error("Plugin schedule key is invalid.");
+          }
+          if (!this.commands.has(`${manifest.id}:${input.commandId}`)) {
+            throw new Error(`Plugin command must be registered before it can be scheduled: ${input.commandId}`);
+          }
+          return this.scheduleAdapter.upsert(manifest.id, input);
+        },
+        list: async () => {
+          assertPermission(manifest, "schedules");
+          if (!this.scheduleAdapter) throw new Error("Plugin schedules are only available in the EdgeEver desktop app.");
+          return this.scheduleAdapter.list(manifest.id);
+        },
+        remove: async (key) => {
+          assertPermission(manifest, "schedules");
+          if (!this.scheduleAdapter) throw new Error("Plugin schedules are only available in the EdgeEver desktop app.");
+          if (!/^[a-z0-9][a-z0-9._-]*$/i.test(key) || key.length > 120) {
+            throw new Error("Plugin schedule key is invalid.");
+          }
+          await this.scheduleAdapter.remove(manifest.id, key);
+        },
+      },
       events: {
         on: (event, listener) => {
           const permission = EVENT_PERMISSIONS[event];
           if (permission) assertPermission(manifest, permission);
           const listeners = this.eventListeners.get(event) ?? new Set();
-          listeners.add(listener as (payload: never) => void);
+          const entry = { pluginId: manifest.id, listener: listener as (payload: never) => void };
+          listeners.add(entry);
           this.eventListeners.set(event, listeners);
-          const dispose = () => listeners.delete(listener as (payload: never) => void);
+          const dispose = () => listeners.delete(entry);
           disposers.push(dispose);
           return dispose;
         },
@@ -1300,14 +1390,27 @@ export class EdgeEverPluginHost {
       network: {
         fetch: async (input, init) => {
           assertPermission(manifest, "network");
+          lifetime.signal.throwIfAborted();
           const url = new URL(input);
-          if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) {
-            throw new Error("Plugin network requests must use HTTPS, except for localhost development.");
+          if (!['http:', 'https:'].includes(url.protocol)) {
+            throw new Error("Plugin network requests must use HTTP or HTTPS.");
           }
-          if (!manifest.networkHosts?.length || !isAllowedNetworkHost(url.hostname.toLocaleLowerCase(), manifest.networkHosts)) {
-            throw new Error(`${url.hostname} is not declared in this plugin's networkHosts.`);
+          const { transport = 'direct', ...requestInit } = init ?? {};
+          const signal = AbortSignal.any([lifetime.signal, ...(requestInit.signal ? [requestInit.signal] : [])]);
+          if (transport === 'public') {
+            assertPermission(manifest, 'network:public');
+            if (!this.publicNetworkAdapter) throw new Error('Public network transport is unavailable in this host.');
+            const method = (requestInit.method ?? 'GET').toUpperCase();
+            if (!['GET', 'HEAD'].includes(method) || requestInit.body != null || requestInit.credentials === 'include') throw new Error('Public transport supports credential-free GET/HEAD only.');
+            const data = await this.publicNetworkAdapter.fetchPublic({ url: url.href, method: method as 'GET' | 'HEAD', headers: Object.fromEntries(new Headers(requestInit.headers)) }, { signal });
+            signal.throwIfAborted();
+            if (requestInit.redirect === 'error' && data.status >= 300 && data.status < 400) throw new Error('Public request returned a redirect.');
+            const response = new Response(method === 'HEAD' || [204, 205, 304].includes(data.status) ? null : data.body, { status: data.status, statusText: data.statusText, headers: data.headers });
+            Object.defineProperty(response, 'url', { value: data.url });
+            return response;
           }
-          return window.fetch(url, { ...init, credentials: "omit" });
+          if (transport !== 'direct') throw new Error('Unsupported network transport.');
+          return window.fetch(url, { ...requestInit, signal });
         },
       },
       ui: {
@@ -1330,6 +1433,10 @@ export class EdgeEverPluginHost {
             assertPermission(manifest, "ui:panels");
             if (!/^[a-z0-9][a-z0-9._-]*$/i.test(panel.id)) throw new Error("Plugin panel id is invalid.");
             if (!panel.title.trim()) throw new Error("Plugin panel title is required.");
+            const allowedPurposes = new Set(["workflow", "dashboard", "preview", "onboarding"]);
+            if (manifest.apiVersion === PLUGIN_API_VERSION && !allowedPurposes.has(panel.purpose)) {
+              throw new Error("Plugin API v2 panels require a supported business purpose; custom settings panels are not allowed.");
+            }
             const key = `${manifest.id}:${panel.id}`;
             if (this.panels.has(key)) throw new Error(`Plugin panel already exists: ${panel.id}`);
             this.panels.set(key, {
@@ -1365,16 +1472,29 @@ export class EdgeEverPluginHost {
   ) {
     if (manifest.id !== entry.id) throw new Error("Marketplace plugin id does not match the downloaded manifest.");
     if (manifest.version !== entry.verification.version) throw new Error("Downloaded version does not match the marketplace verified version.");
+    if (manifest.type === "plugin" && manifest.apiVersion !== PLUGIN_API_VERSION) {
+      throw new Error(`Marketplace plugins must use plugin API v${PLUGIN_API_VERSION}.`);
+    }
+    if (entry.publisher === "edgeever") {
+      if (!entry.verification.checksums?.manifestJson) throw new Error("Official extensions must pin the manifest checksum.");
+      if (manifest.type === "plugin" && !entry.verification.checksums.mainJs) {
+        throw new Error("Official plugins must pin the main.js checksum.");
+      }
+      if (actualChecksums.stylesCss && !entry.verification.checksums.stylesCss) {
+        throw new Error("Official plugins must pin the styles.css checksum when styles are distributed.");
+      }
+    }
     for (const [name, expected] of Object.entries(entry.verification.checksums ?? {})) {
       const actual = actualChecksums[name as keyof CachedPluginPackage["checksums"]];
       if (!actual || actual.toLocaleLowerCase() !== expected) throw new Error(`${name} does not match the marketplace verified checksum.`);
     }
   }
 
-  private emit<K extends keyof PluginEventMap>(event: K, payload: PluginEventMap[K]) {
-    for (const listener of this.eventListeners.get(event) ?? []) {
+  private emit<K extends keyof PluginEventMap>(event: K, payload: PluginEventMap[K], targetPluginId?: string) {
+    for (const entry of this.eventListeners.get(event) ?? []) {
+      if (targetPluginId && entry.pluginId !== targetPluginId) continue;
       try {
-        const result = (listener as (value: never) => unknown)(payload as never);
+        const result = (entry.listener as (value: never) => unknown)(payload as never);
         if (result && typeof (result as PromiseLike<unknown>).then === "function") {
           void Promise.resolve(result).catch((error) => console.error(`Plugin event listener failed for ${event}`, error));
         }
@@ -1409,68 +1529,24 @@ export class EdgeEverPluginHost {
     this.refreshSnapshot();
   }
 
-  private readRecentActions(): RegisteredPluginAction[] {
-    try {
-      const parsed = JSON.parse(readStorageItem(`${RECENT_ACTIONS_STORAGE_PREFIX}:${this.scope}`) ?? "[]") as unknown;
-      if (!Array.isArray(parsed)) return [];
-      return parsed.flatMap((item) => {
-        if (!item || typeof item !== "object") return [];
-        const action = item as Partial<RegisteredPluginAction>;
-        if (
-          typeof action.pluginId !== "string" ||
-          typeof action.id !== "string" ||
-          typeof action.title !== "string" ||
-          (action.type !== "command" && action.type !== "panel")
-        ) return [];
-        return [action as RegisteredPluginAction];
-      }).slice(0, 5);
-    } catch {
-      return [];
-    }
-  }
-
-  private recordRecentAction(action: RegisteredPluginAction) {
-    this.recentActions = [
-      action,
-      ...this.recentActions.filter((item) => item.pluginId !== action.pluginId || item.id !== action.id || item.type !== action.type),
-    ].slice(0, 5);
-    this.persistRecentActions();
-    this.refreshSnapshot();
-  }
-
-  private persistRecentActions() {
-    try {
-      writeStorageItem(`${RECENT_ACTIONS_STORAGE_PREFIX}:${this.scope}`, JSON.stringify(this.recentActions));
-    } catch {
-      // Recent actions are a convenience and must never make a successful plugin action fail.
-    }
-  }
-
   private refreshSnapshot() {
-    const registeredActions = new Map<string, RegisteredPluginAction>([
-      ...[...this.commands.values()].map(({ pluginId, id, title }) => [
-        `command:${pluginId}:${id}`,
-        { pluginId, id, title, type: "command" as const },
-      ] as const),
-      ...[...this.panels.values()].map(({ pluginId, id, title }) => [
-        `panel:${pluginId}:${id}`,
-        { pluginId, id, title, type: "panel" as const },
-      ] as const),
-    ]);
     this.snapshot = {
       extensions: this.extensions.map((item) => ({ ...item, manifest: { ...item.manifest } })),
-      commands: [...this.commands.values()].map(({ pluginId, id, title }) => ({ pluginId, id, title })),
-      panels: [...this.panels.values()].map(({ pluginId, id, title, presentation }) => ({
+      commands: [...this.commands.values()].map(({ pluginId, id, title, listed, menu }) => ({
         pluginId,
         id,
         title,
+        listed: listed === false ? false : undefined,
+        menu: menu === false ? false : undefined,
+      })),
+      panels: [...this.panels.values()].map(({ pluginId, id, title, purpose, presentation }) => ({
+        pluginId,
+        id,
+        title,
+        purpose,
         presentation: presentation === "fullscreen" ? "fullscreen" : "dialog",
       })),
       embeds: [...this.embeds.values()].map(({ pluginId, type }) => ({ pluginId, type })),
-      recentActions: this.recentActions.flatMap((action) => {
-        const registered = registeredActions.get(`${action.type}:${action.pluginId}:${action.id}`);
-        return registered ? [registered] : [];
-      }),
       activeThemeId: this.activeThemeId,
     };
     for (const listener of this.listeners) listener();

@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { AttachmentFileIcon } from "@/components/attachments/AttachmentFileIcon";
 import { COMPACT_ATTACHMENT_WIDTH_CLASS } from "@/components/attachments/attachment-layout";
 import { ButtonTooltip } from "@/components/ui/button-tooltip";
+import { useAttachmentByteSize } from "@/hooks/useAttachmentByteSize";
 import { isDesktopResourceRuntime, toApiResourceUrl } from "@/lib/desktop-resources";
 import { cn } from "@/lib/utils";
 import { loadPdfJs } from "./pdfjs-loader";
@@ -95,7 +96,7 @@ const PdfPage = ({ document, pageNumber, fitWidth, zoom }: PdfPageProps) => {
 
   return (
     <span ref={hostRef} className="flex w-full justify-center" style={{ minHeight: visible && page ? undefined : placeholderHeight }}>
-      <canvas ref={canvasRef} className="max-w-none bg-white shadow-sm" aria-label={`PDF page ${pageNumber}`} />
+      <canvas ref={canvasRef} className="edgeever-paper max-w-none bg-white shadow-sm" aria-label={`PDF page ${pageNumber}`} />
     </span>
   );
 };
@@ -193,9 +194,10 @@ export const PdfViewer = ({
   const [failed, setFailed] = useState(false);
   const [internalFullscreen, setInternalFullscreen] = useState(false);
   const isFullscreen = fullscreen || internalFullscreen;
-  const previewAllowed = canPreviewPdfInline(byteSize);
+  const resolvedByteSize = useAttachmentByteSize(resolvedUrl, byteSize);
+  const previewAllowed = canPreviewPdfInline(resolvedByteSize);
   const expanded = previewAllowed && (isFullscreen || (controlledExpanded ?? uncontrolledExpanded));
-  const metadata = formatAttachmentMetadata("application/pdf", filename || label, byteSize);
+  const metadata = formatAttachmentMetadata("application/pdf", filename || label, resolvedByteSize);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -248,7 +250,7 @@ export const PdfViewer = ({
     <span
       ref={rootRef}
       className={cn(
-        "edgeever-pdf-viewer block overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm",
+        "edgeever-pdf-viewer block overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm",
         expanded ? "w-full" : COMPACT_ATTACHMENT_WIDTH_CLASS,
         isFullscreen && "fixed inset-0 z-[120] flex rounded-none border-0 bg-slate-950/95 p-3 sm:p-5",
         className,
@@ -257,8 +259,8 @@ export const PdfViewer = ({
       aria-modal={isFullscreen ? true : undefined}
       aria-label={isFullscreen ? t("pdfViewer.fullscreenLabel", { filename: label }) : undefined}
     >
-      <span className={cn("flex min-w-0 flex-col", isFullscreen && "mx-auto h-full w-full max-w-6xl overflow-hidden rounded-xl bg-white shadow-2xl")}>
-        <span className="flex min-h-12 shrink-0 items-center gap-2 overflow-x-auto border-b border-slate-200 bg-white px-3">
+      <span className={cn("flex min-w-0 flex-col", isFullscreen && "mx-auto h-full w-full max-w-6xl overflow-hidden rounded-xl bg-card shadow-2xl")}>
+        <span className="flex min-h-12 shrink-0 items-center gap-2 overflow-x-auto border-b border-slate-200 bg-card px-3">
           {isFullscreen && onPrevious ? (
             <ButtonTooltip title={t("pdfViewer.previous")}>
               <button type="button" className="pdf-viewer-action" aria-label={t("pdfViewer.previous")} onClick={onPrevious}>

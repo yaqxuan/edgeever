@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, CircleCheck, Cloud, Copy, ExternalLink, LoaderCircle, MonitorSmartphone, RefreshCw, RotateCcw } from "lucide-react";
+import type { DeploymentMetadata } from "@edgeever/shared/deployment-metadata";
+import { Activity, CircleCheck, Cloud, Copy, ExternalLink, Info, LoaderCircle, MonitorSmartphone, RefreshCw, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { useDeployedUpdateNotice } from "@/hooks/useDeployedUpdateNotice";
 import { detectWebClientKind } from "@/lib/client-environment";
 import { api, getConfiguredDesktopApiBaseUrl, type InstanceHealth } from "@/lib/api";
+import { resolveSystemInfoDeploymentMetadata } from "@/lib/deployment-metadata";
 import { resolveDeploymentPlatform } from "@/lib/instance-runtime";
 import {
   getClientRuntimeDiagnostics,
@@ -14,7 +16,7 @@ import {
   type ClientSyncDiagnostics,
 } from "@/lib/system-diagnostics";
 import { cn } from "@/lib/utils";
-import { getReleaseTagForVersion } from "@/lib/version-check";
+import { getReleaseTagForVersion, isClientAheadOfInstance } from "@/lib/version-check";
 import { copyTextToClipboard } from "./settings-utils";
 
 export type SystemInfoItem = {
@@ -25,8 +27,14 @@ export type SystemInfoItem = {
   status?: "connected" | "connecting" | "failed" | "warning" | "error" | "default";
 };
 
-type InstanceSystemDiagnostics = Pick<InstanceHealth, "build" | "containerImageSource" | "migration" | "objectStorageProvider" | "storage"> & {
+type InstanceSystemDiagnostics = Pick<InstanceHealth, "build" | "containerImageSource" | "deployment" | "migration" | "objectStorageProvider" | "storage"> & {
   runtime?: string | null;
+};
+
+export type SystemInfoDiagnostics = {
+  clientRuntime?: ClientRuntimeDiagnostics | null;
+  instance?: Partial<InstanceSystemDiagnostics> | null;
+  instanceVersion?: string | null;
 };
 
 type SystemInfoGroup = {
@@ -56,9 +64,12 @@ const detectOperatingSystem = (userAgent: string, platform: string) => {
   return null;
 };
 
-const getDeploymentDescription = (t: (key: string) => string) => {
-  const trigger = t(`systemInfo.deploymentTriggers.${__EDGEEVER_DEPLOYMENT_TRIGGER__}`);
-  const method = t(`systemInfo.deploymentMethods.${__EDGEEVER_DEPLOYMENT_METHOD__}`);
+const getDeploymentDescription = (
+  t: (key: string) => string,
+  deployment: DeploymentMetadata,
+) => {
+  const trigger = t(`systemInfo.deploymentTriggers.${deployment.trigger}`);
+  const method = t(`systemInfo.deploymentMethods.${deployment.method}`);
   return `${trigger} · ${method}`;
 };
 
@@ -77,11 +88,7 @@ const getColSpanClass = (colSpan?: SystemInfoItem["colSpan"]) => {
 const getWebSystemInfoGroups = (
   t: (key: string) => string,
   language: string,
-  diagnostics: {
-    clientRuntime?: ClientRuntimeDiagnostics | null;
-    instance?: Partial<InstanceSystemDiagnostics> | null;
-    instanceVersion?: string | null;
-  } = {},
+  diagnostics: SystemInfoDiagnostics = {},
 ): SystemInfoGroup[] => {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || t("systemInfo.unknown");
   const userAgent = navigator.userAgent;
@@ -92,6 +99,14 @@ const getWebSystemInfoGroups = (
       window.matchMedia("(display-mode: fullscreen)").matches,
     navigatorStandalone: (navigator as NavigatorWithStandalone).standalone === true,
   });
+  const deployment = resolveSystemInfoDeploymentMetadata(
+    diagnostics.instance?.deployment,
+    {
+      trigger: __EDGEEVER_DEPLOYMENT_TRIGGER__,
+      method: __EDGEEVER_DEPLOYMENT_METHOD__,
+    },
+    clientKind !== "desktopApp",
+  );
 
   return [
     {
@@ -140,7 +155,7 @@ const getWebSystemInfoGroups = (
               value: t(`systemInfo.containerImageSources.${getContainerImageSourceTranslationKey(diagnostics.instance.containerImageSource)}`),
             }]
           : []),
-        { label: t("systemInfo.deployment"), value: getDeploymentDescription(t), colSpan: "full" },
+        { label: t("systemInfo.deployment"), value: getDeploymentDescription(t, deployment), colSpan: "full" },
       ],
     },
     {
@@ -187,12 +202,8 @@ const getWebSystemInfoGroups = (
 export const getWebSystemInfoItems = (
   t: (key: string) => string,
   language: string,
-  instanceRuntime?: string | null,
-  instanceVersion?: string | null,
-): SystemInfoItem[] => getWebSystemInfoGroups(t, language, {
-  instance: { runtime: instanceRuntime },
-  instanceVersion,
-})
+  diagnostics: SystemInfoDiagnostics = {},
+): SystemInfoItem[] => getWebSystemInfoGroups(t, language, diagnostics)
   .flatMap((group) => group.items);
 
 export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
@@ -326,7 +337,15 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
     window.setTimeout(() => setCopied(false), 1600);
   };
 
+  const clientAheadOfInstance = isClientAheadOfInstance(
+    clientRuntimeQuery.data?.appVersion ?? __EDGEEVER_APP_VERSION__,
+    release?.version,
+  );
+  const clientAheadHint = t(
+    `systemInfo.clientAheadOfInstanceByPlatform.${resolveDeploymentPlatform(healthQuery.data?.health?.runtime)}`,
+  );
   const desktopUpdateState = desktopUpdateStatusQuery.data?.state ?? "idle";
+  const desktopAutoUpdateSupported = clientRuntimeQuery.data?.autoUpdateSupported !== false;
   const desktopUpdateBusy = desktopUpdateCheckMutation.isPending || desktopUpdateInstallMutation.isPending;
   const desktopUpdateStatus = desktopUpdateInstallMutation.isError || desktopUpdateCheckMutation.isError || desktopUpdateStatusQuery.isError
     ? t("systemInfo.desktopUpdateFailed")
@@ -353,7 +372,7 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
         <Button
           size="sm"
           variant="outline"
-          className="h-7 gap-1.5 bg-white px-2.5 text-xs text-slate-700 shadow-xs hover:bg-slate-50"
+          className="h-7 gap-1.5 bg-card px-2.5 text-xs text-slate-700 shadow-xs hover:bg-slate-50"
           type="button"
           onClick={() => void handleCopy()}
         >
@@ -382,11 +401,11 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
                   <h3 id={headingId} className="text-xs font-semibold text-slate-800">{group.title}</h3>
                 </div>
               </div>
-              {isClient && desktopAvailable ? (
+              {isClient && desktopAvailable && desktopAutoUpdateSupported ? (
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-7 bg-white px-2.5 text-xs shadow-xs hover:bg-slate-50"
+                  className="h-7 bg-card px-2.5 text-xs shadow-xs hover:bg-slate-50"
                   type="button"
                   disabled={desktopUpdateBusy || desktopUpdateState === "available"}
                   onClick={handleDesktopUpdate}
@@ -404,9 +423,26 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
                         ? t("systemInfo.desktopUpdateChecking")
                         : t("systemInfo.desktopCheckForUpdates")}
                 </Button>
+              ) : isClient && desktopAvailable ? (
+                <Button
+                  asChild
+                  size="sm"
+                  variant="outline"
+                  className="h-7 bg-card px-2.5 text-xs shadow-xs hover:bg-slate-50"
+                >
+                  <a href="https://github.com/tianma-if/edgeever/releases/latest" target="_blank" rel="noreferrer">
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    {t("systemInfo.desktopDownloadLatest")}
+                  </a>
+                </Button>
               ) : null}
             </div>
-            {isCloud && active && release ? (
+            {isCloud && active && clientAheadOfInstance ? (
+              <p className="flex items-start gap-1.5 px-0.5 text-[11px] leading-4 text-slate-500" role="status">
+                <Info className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" />
+                <span>{clientAheadHint}</span>
+              </p>
+            ) : isCloud && active && release ? (
               <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200/80 bg-emerald-50/70 px-3 py-1.5 text-slate-800" role="status">
                 <CircleCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
                 <div className="min-w-0 flex-1 text-xs font-medium text-emerald-950">
@@ -417,7 +453,7 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
                 </a>
               </div>
             ) : null}
-            {isClient && desktopAvailable && desktopUpdateStatus ? (
+            {isClient && desktopAvailable && desktopAutoUpdateSupported && desktopUpdateStatus ? (
               <p
                 className={cn(
                   "text-right text-xs",
@@ -431,7 +467,7 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
                 {desktopUpdateStatus}
               </p>
             ) : null}
-            <div className="rounded-lg border border-slate-200/80 bg-white p-3 sm:p-3.5">
+            <div className="rounded-lg border border-slate-200/80 bg-card p-3 sm:p-3.5">
               <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3 sm:gap-x-5">
                 {group.items.map((item) => (
                   <div

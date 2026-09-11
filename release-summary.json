@@ -1,17 +1,15 @@
 {
-  "version": "1.52.0",
+  "version": "1.66.0",
   "changes": {
     "en-US": [
-      "Plugins can now expose resource panels and embedded content through expanded, reusable host APIs.",
-      "The AI assistant can be moved around the workspace and now preserves input, refinement context, and on-screen visibility more reliably.",
-      "Desktop editing avoids redundant editor state hydration for a steadier writing experience.",
-      "Custom editor themes can now be imported and exported, while low-contrast choices show warnings without blocking intentional saves."
+      "Redesign mind map color palettes with adaptive contrast, and flatten the theme picker into a clean list.",
+      "Keep flowchart palettes from reverting to forest green after save or reopen.",
+      "Let desktop auto-restart even when the connected instance is behind, and show a quiet, platform-specific hint instead of holding the update."
     ],
     "zh-CN": [
-      "插件现在可通过扩展后的通用宿主 API 提供资源面板与嵌入内容。",
-      "AI 助手现在可在工作区中拖动，并能更可靠地保留输入与优化上下文、保持完整可见。",
-      "桌面端编辑避免重复恢复编辑器状态，带来更稳定的写作体验。",
-      "自定义编辑器主题现在支持导入和导出；低对比度配色会给出提醒，但不再阻止用户有意保存。"
+      "重做思维导图配色并按对比度自适应文字，主题选择改为干净的扁平列表。",
+      "避免流程图配色在保存或重新打开后变回森绿。",
+      "即使云端实例落后，桌面端也会自动重启更新；系统信息改为安静提示，并按 Cloudflare 或 Docker 给出对应更新方式。"
     ]
   }
 }

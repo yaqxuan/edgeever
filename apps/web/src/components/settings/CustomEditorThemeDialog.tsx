@@ -42,6 +42,7 @@ const COLOR_FIELDS = [
   ["heading", "settings.customEditorTheme.heading"],
   ["accent", "settings.customEditorTheme.accent"],
   ["soft", "settings.customEditorTheme.soft"],
+  ["codeBackground", "settings.customEditorTheme.codeBackground"],
   ["border", "settings.customEditorTheme.border"],
 ] as const;
 
@@ -160,7 +161,7 @@ export const CustomEditorThemeDialog = ({
               onClick={() => setActiveMode("light")}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-all ${
                 activeMode === "light"
-                  ? "bg-white text-emerald-800 shadow-sm"
+                  ? "bg-card text-emerald-800 shadow-sm"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -172,7 +173,7 @@ export const CustomEditorThemeDialog = ({
               onClick={() => setActiveMode("dark")}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-all ${
                 activeMode === "dark"
-                  ? "bg-white text-emerald-800 shadow-sm"
+                  ? "bg-card text-emerald-800 shadow-sm"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -191,11 +192,12 @@ export const CustomEditorThemeDialog = ({
                     type="color"
                     value={/^#[0-9a-f]{6}$/i.test(activeColors[key]) ? activeColors[key] : defaultColors[key]}
                     onChange={(event) => updateColor(key as keyof ThemeColors, event.target.value)}
-                    className="h-7 w-7 cursor-pointer rounded border border-slate-200 bg-white p-0.5"
+                    className="h-7 w-7 cursor-pointer rounded border border-slate-200 bg-card p-0.5"
                     aria-label={t(labelKey)}
                   />
                   <Input
                     value={activeColors[key]}
+                    aria-label={t(labelKey)}
                     onChange={(event) => updateColor(key as keyof ThemeColors, event.target.value)}
                     maxLength={7}
                     className="h-7 w-20 px-1.5 font-mono text-[11px]"
@@ -222,7 +224,7 @@ export const CustomEditorThemeDialog = ({
               value={draft.customCss || ""}
               onChange={(event) => setDraft((current) => ({ ...current, customCss: event.target.value }))}
               placeholder="e.g. h1 { font-style: italic; } blockquote { border-radius: 6px; }"
-              className="min-h-[72px] w-full rounded-md border border-slate-200 bg-white p-2 font-mono text-[11px] focus:border-emerald-500 focus:outline-none"
+              className="min-h-[72px] w-full rounded-md border border-slate-200 bg-card p-2 font-mono text-[11px] focus:border-emerald-500 focus:outline-none"
               maxLength={2000}
             />
           </label>
@@ -239,6 +241,7 @@ export const CustomEditorThemeDialog = ({
               className="ProseMirror p-3 text-xs leading-6"
               style={{
                 color: activeColors.text,
+                padding: "0.75rem",
               }}
             >
               {draft.customCss && (
@@ -254,6 +257,27 @@ export const CustomEditorThemeDialog = ({
               <strong style={{ color: activeColors.accent }}>
                 {t("settings.customEditorTheme.previewAccent")}
               </strong>
+              <blockquote
+                style={{
+                  background: activeColors.soft,
+                  color: activeColors.muted,
+                  borderColor: activeColors.accent,
+                  margin: "0.75rem 0 0",
+                  padding: "0.8rem 1rem",
+                }}
+              >
+                <p>{t("settings.customEditorTheme.previewQuote")}</p>
+                <pre
+                  style={{
+                    background: activeColors.codeBackground,
+                    color: activeColors.text,
+                    borderColor: activeColors.border,
+                    marginBottom: 0,
+                  }}
+                >
+                  <code style={{ background: "transparent", color: "inherit" }}>{'const message = "Hello, EdgeEver!";'}</code>
+                </pre>
+              </blockquote>
             </div>
           </div>
         </div>

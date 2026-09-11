@@ -270,6 +270,34 @@ describe("resource route contracts", () => {
     expect(await response.text()).toBe("2345");
   });
 
+  test("serves filename-detected audio inline with a playable MIME type", async () => {
+    const environment = createEnvironment();
+    environment.storage.resources = {
+      get: async () => ({
+        body: new Blob([new Uint8Array(256)]).stream(),
+        size: 256,
+        writeHttpMetadata: () => {},
+      }),
+    };
+    const response = await createApp(agentAuth, async () => ({
+      ...resourceRow,
+      filename: "访谈.flac",
+      mime_type: "application/octet-stream",
+      storage_config_id: null,
+    })).request(
+      "/api/v1/resources/res_1/blob",
+      {},
+      environment,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("audio/flac");
+    expect(response.headers.get("Content-Disposition")).toBe(
+      "inline; filename=\"download.flac\"; filename*=UTF-8''%E8%AE%BF%E8%B0%88.flac",
+    );
+    expect(response.headers.get("Accept-Ranges")).toBe("bytes");
+  });
+
   test("rejects unsatisfiable ranges before object storage is read", async () => {
     const environment = createEnvironment();
     let reads = 0;

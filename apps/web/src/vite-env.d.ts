@@ -25,6 +25,8 @@ interface EdgeEverDesktopBridge {
   copyHtml(html: string, plainText: string): Promise<boolean>;
   setSessionToken(value: string): Promise<{ stored: boolean }>;
   clearSessionToken(): Promise<{ stored: false }>;
+  publicNetworkFetch(requestId: string, input: import("@edgeever/shared").PluginPublicFetchRequest): Promise<import("@edgeever/shared").PluginPublicFetchResponse>;
+  cancelPublicNetworkFetch(requestId: string): Promise<void>;
   clearLocalData(): Promise<
     { scheduled: true }
     | { scheduled: false; errorCode: DesktopLocalDataResetErrorCode }
@@ -35,6 +37,7 @@ interface EdgeEverDesktopBridge {
   sidecarStatus(): Promise<{ available: boolean; path: string; scope: string }>;
   systemInfo(): Promise<{
     appVersion: string;
+    autoUpdateSupported: boolean;
     platform: string;
     architecture: string;
     osVersion: string;
@@ -60,6 +63,11 @@ interface EdgeEverDesktopBridge {
   readResource(id: string): Promise<{ type: string; bytes: Uint8Array }>;
   removeStagedResource(id: string): Promise<void>;
   onCommand(callback: (command: string) => void): () => void;
+  syncScheduledTasks(tasks: import("@edgeever/shared").ScheduledTask[]): Promise<{ scheduled: number }>;
+  onScheduledTask(callback: (payload: {
+    task: import("@edgeever/shared").ScheduledTask;
+    scheduledFor: string;
+  }) => void | Promise<void>): () => void;
   onImportMarkdown(callback: (payload: { name: string; content: string }) => void): () => void;
 }
 

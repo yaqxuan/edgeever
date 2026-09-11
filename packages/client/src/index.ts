@@ -1,4 +1,13 @@
+import { createPluginCapabilities } from './plugin-capabilities';
 import type {
+  CompanionMemory,
+  CompanionDiscoverySettings,
+  CompanionDiscoverySettingsInput,
+  CompanionDiscoveryItem,
+  CompanionAction,
+  CompanionTurn,
+  CompanionTurnInput,
+  CompanionEvent,
   ApiToken,
   AuthSession,
   LoginInput,
@@ -15,6 +24,8 @@ import type {
   MemoSummary,
   MemoShare,
   MemoTemplate,
+  ScheduledTask,
+  ScheduledTaskRun,
   Notebook,
   Resource,
   ResourceListItem,
@@ -37,7 +48,33 @@ import type {
   SyncBootstrapResponse,
   SyncChange,
   SyncChangesResponse,
+  DeploymentMetadata,
+  PluginPublicFetchRequest,
+  PluginPublicFetchResponse,
 } from "@edgeever/shared";
+
+const MAX_SINGLE_REQUEST_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+async function consumeEventStream<T>(body: ReadableStream<Uint8Array>, onEvent: (event: T) => void) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const emit = (frame: string) => {
+    const data = frame.split("\n").find(line => line.startsWith("data: "))?.slice(6);
+    if (data) onEvent(JSON.parse(data) as T);
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) emit(frame);
+      if (done) break;
+    }
+    if (buffer) emit(buffer);
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
 
 export type EdgeEverClientRequestContext = {
   path: string;
@@ -67,6 +104,7 @@ export type InstanceHealth = {
   containerImageSource?: "official-ghcr" | "official-cn-mirror" | "custom" | "unknown" | string | null;
   authMode?: string | null;
   build?: string | null;
+  deployment?: DeploymentMetadata | null;
   migration?: string | null;
   storage?: {
     database?: "d1" | "sqlite" | string | null;
@@ -138,6 +176,37 @@ export type ListTemplatesResponse = {
 
 export type TemplateResponse = {
   template: MemoTemplate;
+};
+
+export type ListScheduledTasksResponse = {
+  tasks: ScheduledTask[];
+};
+
+export type ScheduledTaskResponse = {
+  task: ScheduledTask;
+};
+
+export type ScheduledTaskRunResponse = {
+  run: ScheduledTaskRun;
+};
+
+export type ScheduledTaskRunsResponse = {
+  runs: ScheduledTaskRun[];
+  totalCount: number;
+  nextOffset: number | null;
+};
+
+export type ScheduledTaskRunHistoryItem = ScheduledTaskRun & {
+  taskName: string;
+  pluginId: string;
+  ownerPluginId: string | null;
+  pluginScheduleKey: string | null;
+};
+
+export type ScheduledTaskRunHistoryResponse = {
+  runs: ScheduledTaskRunHistoryItem[];
+  totalCount: number;
+  nextOffset: number | null;
 };
 
 export type MemoShareResponse = {
@@ -320,6 +389,30 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
     return response.json() as Promise<T>;
   };
 
+  const requestPluginPublic = async (input: PluginPublicFetchRequest, signal?: AbortSignal): Promise<PluginPublicFetchResponse> => {
+    const { context, response } = await send("/api/v1/plugins/network/fetch", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal,
+    });
+    const upstreamStatus = response.headers.get("x-edgeever-upstream-status");
+    if (!response.ok || !upstreamStatus) await throwRequestError(context, response, "Public network request failed");
+    const status = Number(upstreamStatus);
+    if (!Number.isInteger(status) || status < 100 || status > 599) throw new Error("Invalid public network response status");
+    const headers: Record<string, string> = {};
+    for (const [key, value] of response.headers) {
+      const prefix = "x-edgeever-upstream-header-";
+      if (key.startsWith(prefix)) headers[key.slice(prefix.length)] = value;
+    }
+    return {
+      url: input.url,
+      status,
+      statusText: decodeURIComponent(response.headers.get("x-edgeever-upstream-status-text") ?? ""),
+      headers,
+      body: await response.arrayBuffer(),
+    };
+  };
+
   const requestResourceResponse = async (path: string, init?: RequestInit) => {
     const isAbsolute = isAbsoluteHttpUrl(path);
     const { context, response } = await send(path, init, {
@@ -498,6 +591,7 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
 
   return {
     getInstanceHealth: () => request<InstanceHealth>("/api/health"),
+    ...createPluginCapabilities(request, requestPluginPublic),
 
     getInstanceRelease: () => request<InstanceRelease>("/api/release"),
 
@@ -668,6 +762,40 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
         signal,
       }),
 
+    listCompanionMemories: () => request<{ memories: CompanionMemory[] }>("/api/v1/companion/memories"),
+    getCompanionDiscoverySettings: () => request<{ settings: CompanionDiscoverySettings }>("/api/v1/companion/discovery/settings"),
+    saveCompanionDiscoverySettings: (input: CompanionDiscoverySettingsInput) => request<{ settings: CompanionDiscoverySettings }>("/api/v1/companion/discovery/settings", { method: "PUT", body: JSON.stringify(input) }),
+    listCompanionDiscoveries: () => request<{ items: CompanionDiscoveryItem[] }>("/api/v1/companion/discovery"),
+    checkCompanionDiscoveries: (locale: string, signal?: AbortSignal) => request<{ items: CompanionDiscoveryItem[] }>(`/api/v1/companion/discovery/check?locale=${encodeURIComponent(locale)}`, { method: "POST", body: "{}", signal }),
+    acknowledgeCompanionDiscovery: (id: string, dismiss = false) => request<{ ok: true }>(`/api/v1/companion/discovery/${encodeURIComponent(id)}/${dismiss ? "dismiss" : "seen"}`, { method: "POST", body: "{}" }),
+    rememberCompanionDiscoveryFeedback: (id: string) => request<{ ok: true }>(`/api/v1/companion/discovery/${encodeURIComponent(id)}/feedback`, { method: "POST", body: "{}" }),
+    listCompanionActions: () => request<{ actions: CompanionAction[] }>("/api/v1/companion/actions"),
+    applyCompanionAction: (id: string) => request<{ action: CompanionAction }>(`/api/v1/companion/actions/${encodeURIComponent(id)}/apply`, { method: "POST", body: "{}" }),
+    dismissCompanionAction: (id: string) => request<{ action: CompanionAction }>(`/api/v1/companion/actions/${encodeURIComponent(id)}/dismiss`, { method: "POST", body: "{}" }),
+    saveCompanionMemory: (content: string, sourceTurnId?: string) => request<{ memory: CompanionMemory }>("/api/v1/companion/memories", {
+      method: "POST", body: JSON.stringify({ content, sourceTurnId }),
+    }),
+    updateCompanionMemory: (memory: CompanionMemory, content: string) => request<{ memory: CompanionMemory }>(`/api/v1/companion/memories/${encodeURIComponent(memory.id)}`, {
+      method: "PATCH", body: JSON.stringify({ content, version: memory.version }),
+    }),
+    forgetCompanionMemory: (memory: CompanionMemory) => request<{ ok: true }>(`/api/v1/companion/memories/${encodeURIComponent(memory.id)}?version=${memory.version}`, { method: "DELETE" }),
+    listCompanionTurns: () => request<{ turns: CompanionTurn[] }>("/api/v1/companion/turns"),
+    getCompanionTurn: (id: string) => request<{ turn: CompanionTurn }>(`/api/v1/companion/turns/${encodeURIComponent(id)}`),
+    cancelCompanionTurn: (id: string) => request<{ ok: true }>(`/api/v1/companion/turns/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+    clearCompanionHistory: () => request<{ ok: true }>("/api/v1/companion/history", { method: "DELETE" }),
+    exportCompanion: () => request<{ version: 2; controls: { useMemory: boolean; learningEnabled: boolean }; exportedAt: string; memories: CompanionMemory[]; turns: CompanionTurn[]; actions: CompanionAction[] }>("/api/v1/companion/export"),
+    importCompanionMemories: (memories: { content: string; kind?: "explicit" | "inferred" }[], controls?: { useMemory: boolean; learningEnabled: boolean }) => request<{ memories: CompanionMemory[] }>("/api/v1/companion/import-memories", {
+      method: "POST", body: JSON.stringify({ version: 2, memories, controls }),
+    }),
+    streamCompanion: async (payload: CompanionTurnInput, options: { signal?: AbortSignal; onEvent: (event: CompanionEvent) => void }) => {
+      const { context, response } = await send("/api/v1/companion/turns", {
+        method: "POST", body: JSON.stringify(payload), signal: options.signal,
+      });
+      if (!response.ok) await throwRequestError(context, response);
+      if (!response.body) throw new ApiRequestError("Stream unavailable", 502, "companion_failed");
+      await consumeEventStream(response.body, options.onEvent);
+    },
+
     streamAiGeneration: async (
       payload: AiGenerateInput,
       streamOptions: { signal?: AbortSignal; onEvent: (event: AiStreamEvent) => void },
@@ -682,22 +810,7 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
         await throwRequestError(context, response);
       }
       if (!response.body) throw new ApiRequestError("Streaming response is unavailable", 502, "ai_stream_unavailable");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-        const frames = buffer.split("\n\n");
-        buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          const data = frame.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
-          if (data) streamOptions.onEvent(JSON.parse(data) as AiStreamEvent);
-        }
-        if (done) break;
-      }
-      const trailingData = buffer.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
-      if (trailingData) streamOptions.onEvent(JSON.parse(trailingData) as AiStreamEvent);
+      await consumeEventStream(response.body, streamOptions.onEvent);
     },
 
     listUsers: () => request<ListUsersResponse>("/api/v1/users"),
@@ -850,6 +963,7 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
     createMemo: (payload: {
       notebookId: string;
       title?: string;
+      contentJson?: TiptapDoc;
       contentMarkdown?: string;
       tags?: string[];
       createdAt?: string;
@@ -893,6 +1007,98 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
 
     deleteTemplate: (templateId: string) =>
       request<{ ok: true }>(`/api/v1/templates/${templateId}`, { method: "DELETE" }),
+
+    listScheduledTasks: (executorDeviceId?: string) => {
+      const search = new URLSearchParams();
+      if (executorDeviceId) search.set("executorDeviceId", executorDeviceId);
+      const suffix = search.size > 0 ? `?${search.toString()}` : "";
+      return request<ListScheduledTasksResponse>(`/api/v1/scheduled-tasks${suffix}`);
+    },
+
+    listScheduledTaskRunHistory: (offset = 0, limit = 50) => {
+      const search = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+      return request<ScheduledTaskRunHistoryResponse>(`/api/v1/scheduled-task-runs?${search.toString()}`);
+    },
+
+    listPluginScheduledTasks: (pluginId: string) => request<ListScheduledTasksResponse>(
+      `/api/v1/scheduled-tasks/plugin/${encodeURIComponent(pluginId)}`,
+    ),
+
+    upsertPluginScheduledTask: (payload: {
+      pluginId: string;
+      scheduleKey: string;
+      name: string;
+      commandId: string;
+      cronExpression: string;
+      timezone: string;
+      executorDeviceId: string;
+      missedRunPolicy?: "run-once" | "skip";
+      isEnabled?: boolean;
+    }) => request<ScheduledTaskResponse>("/api/v1/scheduled-tasks/plugin-upsert", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+    deletePluginScheduledTask: (pluginId: string, scheduleKey: string) => request<{ ok: true }>(
+      `/api/v1/scheduled-tasks/plugin/${encodeURIComponent(pluginId)}/${encodeURIComponent(scheduleKey)}`,
+      { method: "DELETE" },
+    ),
+
+    createScheduledTask: (payload: {
+      name: string;
+      taskType: "plugin-command";
+      taskPayload: { pluginId: string; commandId: string };
+      cronExpression: string;
+      timezone: string;
+      executorDeviceId: string;
+      missedRunPolicy?: "run-once" | "skip";
+      isEnabled?: boolean;
+    }) => request<ScheduledTaskResponse>("/api/v1/scheduled-tasks", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+    updateScheduledTask: (taskId: string, payload: {
+      name?: string;
+      taskPayload?: { pluginId: string; commandId: string };
+      cronExpression?: string;
+      timezone?: string;
+      executorDeviceId?: string;
+      missedRunPolicy?: "run-once" | "skip";
+      isEnabled?: boolean;
+    }) => request<ScheduledTaskResponse>(`/api/v1/scheduled-tasks/${encodeURIComponent(taskId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+    deleteScheduledTask: (taskId: string) => request<{ ok: true }>(
+      `/api/v1/scheduled-tasks/${encodeURIComponent(taskId)}`,
+      { method: "DELETE" },
+    ),
+
+    listScheduledTaskRuns: (taskId: string, offset = 0, limit = 50) => {
+      const search = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+      return request<ScheduledTaskRunsResponse>(
+        `/api/v1/scheduled-tasks/${encodeURIComponent(taskId)}/runs?${search.toString()}`,
+      );
+    },
+
+    claimScheduledTaskRun: (taskId: string, payload: {
+      scheduledFor: string;
+      executorDeviceId: string;
+    }) => request<ScheduledTaskRunResponse>(
+      `/api/v1/scheduled-tasks/${encodeURIComponent(taskId)}/runs/claim`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+
+    finishScheduledTaskRun: (taskId: string, runId: string, payload: {
+      executorDeviceId: string;
+      status: "succeeded" | "failed";
+      errorMessage?: string | null;
+    }) => request<ScheduledTaskRunResponse>(
+      `/api/v1/scheduled-tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/finish`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
 
     moveMemos: (payload: { memoIds: string[]; notebookId: string }) =>
       request<{ ok: true; moved: number }>("/api/v1/memos/batch/move", {
@@ -973,8 +1179,16 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
         method: "DELETE",
       }),
 
-    getMarkdownExportPage: (offset = 0, limit = 50) =>
-      request<MarkdownExportPage>(`/api/v1/exports/markdown?offset=${offset}&limit=${limit}`),
+    getMarkdownExportPage: (offset = 0, limit = 50, memoIds?: string[]) => {
+      const search = new URLSearchParams({
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (memoIds && memoIds.length > 0) {
+        search.set("ids", memoIds.join(","));
+      }
+      return request<MarkdownExportPage>(`/api/v1/exports/markdown?${search.toString()}`);
+    },
 
     getJsonBackupPage: (offset = 0, limit = 25) =>
       request<JsonBackupPage>(`/api/v1/backups/json?offset=${offset}&limit=${limit}`),
@@ -1026,19 +1240,68 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
     downloadGithubPluginAsset: (
       owner: string,
       repository: string,
-      assetId: number,
+      releaseTag: string,
       assetName: "manifest.json" | "main.js" | "styles.css",
     ) => requestArrayBuffer(
-      `/api/v1/plugins/github/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/assets/${assetId}/${encodeURIComponent(assetName)}`,
+      `/api/v1/plugins/github/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/releases/${encodeURIComponent(releaseTag)}/assets/${encodeURIComponent(assetName)}`,
     ),
 
+    downloadGithubPluginAssetById: (
+      owner: string,
+      repository: string,
+      assetId: string,
+      assetName: "manifest.json" | "main.js" | "styles.css",
+    ) => requestArrayBuffer(
+      `/api/v1/plugins/github/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/assets/${encodeURIComponent(assetId)}/${encodeURIComponent(assetName)}`,
+    ),
+
+    getGithubPluginRepositoryManifest: async (owner: string, repository: string) => {
+      const path = `/api/v1/plugins/github/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/manifest`;
+      const { context, response } = await send(path, undefined, { setJsonContentType: false });
+      if (!response.ok) await throwRequestError(context, response, "GitHub plugin manifest request failed");
+      return response.text();
+    },
+
+    getGithubPluginLatestManifest: async (owner: string, repository: string) => {
+      const path = `/api/v1/plugins/github/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/latest-manifest`;
+      const { context, response } = await send(path, undefined, { setJsonContentType: false });
+      if (!response.ok) await throwRequestError(context, response, "GitHub plugin latest-release manifest request failed");
+      return response.text();
+    },
+
+    getGithubPluginRelease: async (owner: string, repository: string, releaseTag: string) => {
+      const path = `/api/v1/plugins/github/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/releases/tags/${encodeURIComponent(releaseTag)}`;
+      const { context, response } = await send(path, undefined, { setJsonContentType: false });
+      if (response.status === 404) return null;
+      if (!response.ok) await throwRequestError(context, response, "GitHub plugin release request failed");
+      return response.json() as Promise<{
+        tag_name: string;
+        draft: boolean;
+        assets: Array<{
+          id: number;
+          name: string;
+          size: number;
+          url: string;
+          browser_download_url: string;
+          digest?: string;
+        }>;
+      }>;
+    },
+
     uploadMemoResource: (memoId: string, file: Blob | FormData) => {
-      if (!(file instanceof FormData)) {
+      // Small files do not benefit from an upload session's three round trips.
+      // Keep large attachments on the bounded-memory, resumable path.
+      if (!(file instanceof FormData) && file.size > MAX_SINGLE_REQUEST_UPLOAD_BYTES) {
         return uploadMemoResourceMultipart(memoId, file);
       }
       const form = file instanceof FormData ? file : new FormData();
-      if (!(file instanceof FormData)) form.append("file", file);
-      return request<ResourceResponse>(`/api/v1/memos/${memoId}/resources`, {
+      if (!(file instanceof FormData)) {
+        const filename = "name" in file && typeof file.name === "string" && file.name.trim()
+          ? file.name
+          : "attachment";
+        form.append("file", file, filename);
+      }
+      return request<ResourceResponse>(`/api/v1/memos/${encodeURIComponent(memoId)}/resources`, {
         method: "POST",
         body: form,
       });
