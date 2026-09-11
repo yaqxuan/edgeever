@@ -54,7 +54,7 @@ export const NotebookTreeItem = ({
   onExpandSiblings: (parentId: string | null) => void;
 }) => {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const hasChildren = node.children.length > 0;
   const selected = node.id === selectedNotebookId;
   const isInbox = node.slug === "inbox";
