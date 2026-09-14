@@ -417,4 +417,77 @@ describe("web repository offline boundaries", () => {
       if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: previousOnline });
     }
   });
+
+  test("reads notebooks from the initialized local mirror without repeating the aggregate API query", async () => {
+    const previousOnline = globalThis.navigator?.onLine;
+    if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: true });
+    const restoreWindow = installTestWindow({ hostname: "demo.edgeever.org" });
+    const scope = "https://demo.edgeever.org|user-1";
+    const timestamp = "2026-01-02T12:00:00.000Z";
+    await localDb.syncMeta.put({ scope, key: "identity", value: "sync-1", updatedAt: timestamp });
+    await localDb.notebooks.put({
+      scope,
+      id: "notebook-1",
+      parentId: null,
+      name: "Inbox",
+      slug: "inbox",
+      icon: null,
+      color: null,
+      sortOrder: 0,
+      memoCount: 0,
+      lastMemoUpdatedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await createLocalMemo(scope, { notebookId: "notebook-1", updatedAt: timestamp });
+    const originalListNotebooks = api.listNotebooks;
+    let remoteCalls = 0;
+    api.listNotebooks = async () => {
+      remoteCalls += 1;
+      return { notebooks: [] };
+    };
+
+    try {
+      const repository = createWebRepository(scope);
+      expect(await repository.listNotebooks()).toEqual({
+        notebooks: [expect.objectContaining({
+          id: "notebook-1",
+          memoCount: 1,
+          lastMemoUpdatedAt: timestamp,
+        })],
+      });
+      expect(await repository.listNotebooks()).toEqual({
+        notebooks: [expect.objectContaining({ id: "notebook-1", memoCount: 1 })],
+      });
+      await Promise.resolve();
+      expect(remoteCalls).toBe(0);
+    } finally {
+      api.listNotebooks = originalListNotebooks;
+      restoreWindow();
+      if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: previousOnline });
+    }
+  });
+
+  test("returns an initialized empty notebook mirror without an aggregate API query while online", async () => {
+    const previousOnline = globalThis.navigator?.onLine;
+    if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: true });
+    const restoreWindow = installTestWindow({ hostname: "demo.edgeever.org" });
+    const scope = "https://demo.edgeever.org|user-1";
+    await localDb.syncMeta.put({ scope, key: "identity", value: "sync-1", updatedAt: new Date().toISOString() });
+    const originalListNotebooks = api.listNotebooks;
+    let remoteCalls = 0;
+    api.listNotebooks = async () => {
+      remoteCalls += 1;
+      return { notebooks: [] };
+    };
+
+    try {
+      expect(await createWebRepository(scope).listNotebooks()).toEqual({ notebooks: [] });
+      expect(remoteCalls).toBe(0);
+    } finally {
+      api.listNotebooks = originalListNotebooks;
+      restoreWindow();
+      if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: previousOnline });
+    }
+  });
 });

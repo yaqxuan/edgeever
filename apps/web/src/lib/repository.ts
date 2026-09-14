@@ -184,8 +184,12 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
   return ({
   async listNotebooks() {
     const local = await listLocalNotebooks(scope);
-    if (local.notebooks.length > 0 || isOffline()) {
-      if (!isOffline()) void api.listNotebooks().then((remote) => Promise.all(remote.notebooks.map((notebook) => putLocalNotebook(scope, notebook)))).catch(() => {});
+    if (
+      local.notebooks.length > 0
+      || isOffline()
+      || await isLocalMirrorInitialized(scope)
+      || await hasLocalMirrorData(scope)
+    ) {
       return local;
     }
 
